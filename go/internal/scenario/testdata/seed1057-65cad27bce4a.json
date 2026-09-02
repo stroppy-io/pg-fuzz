@@ -1,0 +1,107 @@
+{
+  "seed": 1057,
+  "failure": "after_load/t2: probe failed: SELECT count(*) FROM t2 WHERE v > 0",
+  "notes": [],
+  "scenario": {
+    "seed": 1057,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "repeatable_read",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "4MB",
+      "orioledb.undo_circular_buffer_size": "1MB",
+      "orioledb.debug_disable_bgwriter": "on"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "heap",
+        "partitioned": true,
+        "pk": "none",
+        "pk_extra": "boolean",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": true,
+        "extra_types": [
+          "timestamptz",
+          "jsonb",
+          "bigint[]"
+        ],
+        "indexes": [
+          "btree",
+          "partial"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 500
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "smallint",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "text",
+          "bigint[]"
+        ],
+        "indexes": [],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "timestamptz",
+        "compress": 1,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "expression",
+          "brin"
+        ],
+        "tablespace": null,
+        "index_tablespace": "ts_b",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "prepare_2pc",
+        "table": "t0"
+      },
+      {
+        "op": "add_column",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_ddl",
+        "table": "t2"
+      },
+      {
+        "op": "attach_partition",
+        "table": "t2"
+      },
+      {
+        "op": "repeatable_read_write",
+        "table": "t0"
+      }
+    ]
+  }
+}

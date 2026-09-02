@@ -1,0 +1,105 @@
+{
+  "seed": 103,
+  "failure": "after_load/t0: probe failed: SELECT count(*) FROM t0 WHERE v > 0",
+  "notes": [],
+  "scenario": {
+    "seed": 103,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 1
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "timestamptz",
+        "compress": 1,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "jsonb",
+          "numeric",
+          "bigint"
+        ],
+        "indexes": [
+          "hash",
+          "brin",
+          "spgist"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 50000
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "int",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "text",
+          "timestamptz",
+          "bigint[]"
+        ],
+        "indexes": [
+          "hash"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "boolean",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "bigint[]",
+          "text",
+          "uuid"
+        ],
+        "indexes": [
+          "btree",
+          "gin"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "serializable_write",
+        "table": "t2"
+      },
+      {
+        "op": "rollback_insert",
+        "table": "t0"
+      },
+      {
+        "op": "add_column",
+        "table": "t1"
+      },
+      {
+        "op": "concurrent_write",
+        "table": "t0"
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+--- a/src/backend/utils/misc/guc-file.l
++++ b/src/backend/utils/misc/guc-file.l
+@@ -407,13 +407,26 @@
+ 		/* now we must have the option value */
+ 		if (token != GUC_ID &&
+ 			token != GUC_STRING &&
+ 			token != GUC_INTEGER &&
+ 			token != GUC_REAL &&
+ 			token != GUC_UNQUOTED_STRING)
+ 			goto parse_error;
+-		if (token == GUC_STRING)	/* strip quotes and escapes */
+-			opt_value = DeescapeQuotedString(yytext);
++		if (token == GUC_STRING)	/* strip quotes and escapes */
++		{
++			/*
++			 * A quoted value may contain an embedded NUL: the STRING lexer
++			 * rule's [^'\\\n] class matches it.  DeescapeQuotedString()
++			 * then measures the token with strlen(), which stops at that NUL,
++			 * so it mis-parses the value -- tripping Assert(s[len - 1] == '\'') in
++			 * an assert-enabled build and silently truncating the value in a
++			 * production one.  A configuration value cannot meaningfully hold
++			 * a NUL, so reject the file rather than mis-read it.
++			 */
++			if (strlen(yytext) != (size_t) yyleng)
++				goto parse_error;
++			opt_value = DeescapeQuotedString(yytext);
++		}
+ 		else
+ 			opt_value = pstrdup(yytext);
+ 
+ 		/* now we'd like an end of line, or possibly EOF */

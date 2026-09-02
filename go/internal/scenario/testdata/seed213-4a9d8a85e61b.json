@@ -1,0 +1,62 @@
+{
+  "seed": 213,
+  "failure": "after_concurrent_ddl:t0/t0: probe failed: SELECT count(*) FROM t0 WHERE i BETWEEN 1 AND 4000",
+  "notes": [],
+  "scenario": {
+    "seed": 213,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "table_lock",
+      "orioledb.default_compress": 1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "1MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "int",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "bigint[]"
+        ],
+        "indexes": [
+          "spgist",
+          "gin"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_b",
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "alter_type",
+        "table": "t0"
+      },
+      {
+        "op": "alter_type",
+        "table": "t0"
+      },
+      {
+        "op": "churn_evict",
+        "table": "t0"
+      },
+      {
+        "op": "concurrent_ddl",
+        "table": "t0"
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+# Accepted UndefinedBehaviorSanitizer sites, scoped to where they apply.
+#
+# A site firing outside its scope FAILS the round. A site absent INSIDE its
+# scope is reported, but only after sustained absence -- because absence is not
+# observation, and a fuzzer that never reached a site looks exactly like a site
+# somebody fixed.
+#
+# WHY THE SCOPE COLUMN EXISTS
+# ===========================
+# PostgreSQL 18 rewrote tm2timestamp with checked arithmetic. Without a scope,
+# every 18/master workspace reports that row withdrawable every round, forever
+# -- a permanent false signal, guaranteed to arrive the moment those builds
+# land. Scoping turns it into an assertion the gate checks in BOTH directions:
+#
+#   fires outside scope   -> a regression, or a backport nobody recorded
+#   stops firing inside   -> a fix, or the target stopped reaching it
+#
+# The noise becomes the most interesting thing the list can produce.
+#
+# scope is a comma-separated list of workspace-name globs. "*" means everywhere.
+#
+# function	scope	site	class	reference	added
+pg_strtoint32_safe	*	numutils.c negation of INT32_MIN, int4in	signed-overflow	FINDINGS/README.md	2026-08-18
+pg_strtoint64_safe	*	numutils.c negation of INT64_MIN	signed-overflow	FINDINGS/README.md	2026-08-18
+inet_cidr_pton_ipv4	*	inet_net_pton.c octet accumulation	signed-overflow	FINDINGS/README.md	2026-08-18
+inet_net_pton_ipv4	*	inet_net_pton.c octet accumulation, non-CIDR path	signed-overflow	FINDINGS/README.md	2026-08-18
+do_to_timestamp	*	formatting.c to_date / to_timestamp field arithmetic	signed-overflow	FINDINGS/README.md	2026-08-18
+# Rewritten with pg_mul_s64_overflow/pg_add_s64_overflow upstream; the 18+ and
+# master trees should NOT produce it. If they do, that is a finding.
+tm2timestamp	pg16*,pg17*,oriole16*,oriole17*,oriolebare16*,oriolebare17*	timestamp.c date * USECS_PER_DAY	signed-overflow	FINDINGS/README.md	2026-08-18

@@ -1,0 +1,29 @@
+diff --git a/projects/postgresql/fuzzer/simple_query_fuzzer.c b/projects/postgresql/fuzzer/simple_query_fuzzer.c
+index 2baccf8..6609761 100644
+--- a/projects/postgresql/fuzzer/simple_query_fuzzer.c
++++ b/projects/postgresql/fuzzer/simple_query_fuzzer.c
+@@ -24,6 +24,7 @@
+ #include "libpq/libpq.h"
+ #include "libpq/pqsignal.h"
+ #include "miscadmin.h"
++#include "portability/instr_time.h"	/* pg_initialize_timing() */
+ #include "optimizer/optimizer.h"
+ #include "parser/analyze.h"
+ #include "parser/parser.h"
+@@ -70,6 +71,16 @@ static void exec_simple_query(const char *query_string) {
+ 
+ int LLVMFuzzerInitialize(int *argc, char ***argv) {
+   MemoryContextInit();
++  /*
++   * InitializeGUCOptions() applies the compiled-in default for
++   * timing_clock_source, which runs check_timing_clock_source(), which does
++   * Assert(timing_initialized). PostmasterMain() and InitProcessGlobals() call
++   * pg_initialize_timing() before GUC setup; this sequence goes through
++   * neither, so it has to be called here or the harness aborts at startup
++   * under --enable-cassert, before executing a single input.
++   */
++  pg_initialize_timing();
++
+   InitializeGUCOptions();
+   InitializeMaxBackends();
+ 

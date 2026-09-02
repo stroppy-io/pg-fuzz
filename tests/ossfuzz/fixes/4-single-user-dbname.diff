@@ -1,0 +1,48 @@
+diff --git a/projects/postgresql/fuzzer/protocol_fuzzer.c b/projects/postgresql/fuzzer/protocol_fuzzer.c
+index 9e02567..b1eb276 100644
+--- a/projects/postgresql/fuzzer/protocol_fuzzer.c
++++ b/projects/postgresql/fuzzer/protocol_fuzzer.c
+@@ -50,7 +50,7 @@ static bool postgre_started;
+ static char *buffer;
+ static size_t buffersize;
+ static char *bufferpointer;
+-static char *av[6];
++static char *av[7];
+ 
+ int LLVMFuzzerInitialize(int *argc, char ***argv) {
+ 	char *exe_path = (*argv)[0];
+@@ -65,7 +65,15 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
+ 	av[2] = "-D/tmp/protocol_db/data";
+ 	av[3] = "-F";
+ 	av[4] = "-k\"/tmp\"";
+-	av[5] = NULL;
++	/*
++	 * The database to open. Single-user mode takes it as the last non-option
++	 * argument and falls back to the username when it is absent -- so without
++	 * this the backend tries to open a database called "fuzzuser", which the
++	 * build never creates. It creates "dbfuzz" (see dbfuzz.c). The result was
++	 * that this target executed exactly one input, ever.
++	 */
++	av[5] = "dbfuzz";
++	av[6] = NULL;
+ 
+ 	system("rm -rf /tmp/protocol_db; mkdir /tmp/protocol_db; cp -r data /tmp/protocol_db");
+ 	system("cp -r tmp_install /tmp/");
+@@ -73,7 +81,7 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
+ 	MemoryContextInit();
+ 	if(!sigsetjmp(postgre_exit, 0)){
+ 		postgre_started = true;
+-		PostgresSingleUserMain(5, av, "fuzzuser");
++		PostgresSingleUserMain(6, av, "fuzzuser");
+ 	}
+ 	pq_endmsgread();
+ 	return 0;
+@@ -105,7 +113,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+ 
+ 	if(!sigsetjmp(postgre_exit, 0)){
+ 		postgre_started = true;
+-		PostgresSingleUserMain(5, av, "fuzzuser");
++		PostgresSingleUserMain(6, av, "fuzzuser");
+ 	}
+ 	pq_endmsgread();
+ 	postgre_started = false;

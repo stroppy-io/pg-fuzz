@@ -1,0 +1,125 @@
+{
+  "seed": 1088,
+  "failure": "prepare_2pc: psql:<stdin>:2: ERROR:  duplicate key value violates unique constraint \"index_bridge\"\nDETAIL:  Key (index_bridging_ctid)=((0,1)) already exists.",
+  "notes": [],
+  "scenario": {
+    "seed": 1088,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "repeatable_read",
+      "orioledb.default_compress": 1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "1MB",
+      "orioledb.undo_circular_buffer_size": "1MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": "ts_a",
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "double precision",
+        "compress": 1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "partial",
+          "brin"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "text",
+        "compress": -1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "expression"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "text",
+        "compress": 1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "numeric",
+          "timestamptz"
+        ],
+        "indexes": [
+          "spgist",
+          "brin"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "restart_crash",
+        "table": "t0"
+      },
+      {
+        "op": "move_index",
+        "table": "t0"
+      },
+      {
+        "op": "prepare_2pc",
+        "table": "t0"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t1"
+      },
+      {
+        "op": "move_index",
+        "table": "t0"
+      },
+      {
+        "op": "reindex",
+        "table": "t0"
+      },
+      {
+        "op": "attach_partition",
+        "table": "t2"
+      },
+      {
+        "op": "insert_more",
+        "table": "t1"
+      },
+      {
+        "op": "repeatable_read_write",
+        "table": "t2"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t0"
+      }
+    ]
+  }
+}

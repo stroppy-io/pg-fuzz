@@ -1,0 +1,127 @@
+{
+  "seed": 1008,
+  "failure": "after_set_tablespace:t2/t2: count failed",
+  "notes": [],
+  "scenario": {
+    "seed": 1008,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "8MB",
+      "orioledb.undo_circular_buffer_size": "1MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": "ts_a",
+    "writers": 4,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite",
+        "pk_extra": "timestamptz",
+        "compress": 1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "expression",
+          "partial"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "double precision",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": true,
+        "extra_types": [
+          "numeric"
+        ],
+        "indexes": [
+          "partial"
+        ],
+        "tablespace": null,
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "double precision",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "bigint[]",
+          "numeric"
+        ],
+        "indexes": [
+          "multicolumn",
+          "btree",
+          "expression"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "concurrent_write",
+        "table": "t1"
+      },
+      {
+        "op": "insert_more",
+        "table": "t1"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t2"
+      },
+      {
+        "op": "concurrent_ddl",
+        "table": "t0"
+      },
+      {
+        "op": "move_across_partition",
+        "table": "t2"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t0"
+      },
+      {
+        "op": "vacuum",
+        "table": "t2"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t1"
+      },
+      {
+        "op": "move_index",
+        "table": "t0"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t0"
+      }
+    ]
+  }
+}

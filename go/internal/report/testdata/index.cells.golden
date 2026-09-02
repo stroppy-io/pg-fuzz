@@ -1,0 +1,70 @@
+run | inputs | corpus | &Delta; | coverage | reproducers | report
+20260828 21:08 | ? | 2,277,774 | &mdash; | 1.24% | &mdash; | none
+20260828 21:13 | 69a39826 | 2,277,774 | +0 | 1.24% | 2,134 | none
+20260828 21:43 | 7ef7a089 &#8853; | 2,277,774 | +0 | 1.24% | 2,134 | open
+--
+run | acknowledged | under half their floor | no floor enforced | total masked
+20260828 21:43 | 0 | 157 | 12 | 22
+--
+Target | Runs | How | Since
+backend_types | 1 | below half its floor | 20260828 21:43
+binary_recv | 1 | below half its floor | 20260828 21:43
+config_file | 1 | below half its floor | 20260828 21:43
+conninfo | 1 | below half its floor, no comparable floor | 20260828 21:43
+datetime | 1 | below half its floor, no comparable floor | 20260828 21:43
+encoding | 1 | below half its floor | 20260828 21:43
+extension_funcs | 1 | below half its floor, no comparable floor | 20260828 21:43
+formatting | 1 | below half its floor | 20260828 21:43
+geo | 1 | below half its floor | 20260828 21:43
+hba_file | 1 | below half its floor, no comparable floor | 20260828 21:43
+json_parser | 1 | below half its floor | 20260828 21:43
+jsonb | 1 | below half its floor | 20260828 21:43
+jsonpath | 1 | below half its floor, no comparable floor | 20260828 21:43
+numeric | 1 | below half its floor, no comparable floor | 20260828 21:43
+protocol | 1 | below half its floor, no comparable floor | 20260828 21:43
+raw_parser | 1 | below half its floor | 20260828 21:43
+regex | 1 | below half its floor, no comparable floor | 20260828 21:43
+scalar_types | 1 | below half its floor, no comparable floor | 20260828 21:43
+simple_query | 1 | below half its floor, no comparable floor | 20260828 21:43
+spi_query | 1 | below half its floor, no comparable floor | 20260828 21:43
+tsearch | 1 | below half its floor | 20260828 21:43
+xlogreader | 1 | below half its floor, no comparable floor | 20260828 21:43
+--
+what | value
+archived | 2026-08-28T19:49:29Z
+host | lubuntu1.h.khaprov.com
+tool commit | 59f30cb
+inputs hash | 7ef7a089
+fingerprint definition | v2
+oss-fuzz commit | 0f4d4d3004beb4946db46905163b1638777395a9
+base image (libFuzzer) | gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04@sha256:feb9e59248ce2de645388db04986b84d668692e7723eca6104f935494866d679
+harness sources | d5c35915a6e4f781
+harness commit | 65dfd0f
+pg17-ext-all-add pg_ref_sha | 25c49f3a4a742ba2
+pg17-ext-all-und pg_ref_sha | 25c49f3a4a742ba2
+--
+target | add | und
+backend_types | 9d0d3c0802159ebf | 58a49d965ac7d0d6
+binary_recv | 8771478e2fab0677 | c29bb3c331f3b535
+config_file | 666034704204add3 | 8b19ba4d43cb6201
+conninfo | fe0a4867ff55144d | 0319f549c1ba2398
+datetime | 9cd8b7a029d1dbaf | 3031efe9fda376b1
+encoding | 6de9f3bd5be2ee40 | eaf57b410b0a7e57
+extension_funcs | 0122013a56084147 | e0cba521bb013f04
+formatting | e75aa6ac5c0f6b06 | 709288d6ea02cee6
+geo | ab15e098f966e0a2 | 28921e6c71a6430f
+hba_file | b4dfd29b172b35b2 | 9116ab2e75b4742f
+json_parser | a817907344dca97b | 45f91333c428c0b3
+jsonb | f28ce353086794ae | 0541a5b0e7c5b35b
+jsonpath | 867f875ef59934ee | 52141aa1b003340e
+network | a8d4ba22cd41ebe0 | aa32edf2df48a0f3
+numeric | 6576d25a4b6cddc0 | 80416d3497fd8aaa
+protocol | 79965fd0d5b59eef | 73fab3e8749b818d
+raw_parser | 9c7ab54935a9a37c | 2ff69d6411b7837e
+regex | ce5d28f544226c19 | b004a236863d33f7
+scalar_types | f80fdca56cacba22 | 5267146a8c6c5de5
+simple_query | d60b5440d0e16da2 | 2f76243c61ef1d72
+spi_query | c670287617e538d8 | e310c8d2f94b4e9a
+tsearch | 40b7e6ccc5220f27 | fc95bc7d8bfaef3d
+xlogreader | da8dc94ac6ce3b10 | ad62d98b964a4e3c
+--

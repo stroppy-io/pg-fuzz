@@ -1,0 +1,352 @@
+// Package census groups crash reports into distinct signatures.
+//
+// Hundreds of artifacts usually collapse into a handful of signatures, and a
+// handful of signatures into fewer real defects. The grouping is the first
+// step of triage and the only one a machine can do.
+//
+// WHAT THE SIGNATURE KEEPS, AND WHAT IT THROWS AWAY
+// =================================================
+// Everything that varies per hit goes: the pid, the address, the operand
+// values. What stays is the predicate, the file basename and the line. Keeping
+// a digit that changes on every hit turns one defect into a thousand
+// signatures; dropping one that identifies the site merges two defects into
+// one.
+//
+// THE LEAK RULE IS SEPARATE, AND THAT COST A CAMPAIGN
+// ===================================================
+// The ASan rule expects "SUMMARY: AddressSanitizer: <kind> ...", and a leak
+// emits "SUMMARY: AddressSanitizer: 32768 byte(s) leaked in 4 allocation(s)"
+// -- a digit where the kind should be. The consequence was not a mangled
+// signature but NO signature: a campaign whose most interesting result was
+// fifteen distinct leak sites consolidated to zero leak rows, in the directory
+// kept precisely to preserve them. Leaks are keyed on the DEDUP_TOKEN's last
+// frame, which is the allocation site and the only stable part.
+//
+// And deliberately NO second rule matching "byte(s) leaked": libFuzzer prints
+// a DEDUP_TOKEN beside every leak it surfaces, so a SUMMARY rule matches the
+// same report twice. It produced four phantom "unattributed" hits against four
+// real ones when tried.
+package census
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Row is one distinct signature.
+type Row struct {
+	Signature  string   `json:"signature"`
+	Hits       int      `json:"hits"`
+	Workspaces []string `json:"workspaces"`
+	Families   []string `json:"families"`
+	Targets    []string `json:"targets"`
+	OrioleOnly bool     `json:"oriole_only"`
+	OrioleWS   []string `json:"oriole_ws"`
+	VanillaWS  []string `json:"vanilla_ws"`
+	InOrioleDB bool     `json:"in_orioledb_code"`
+	Sources    []string `json:"sources"`
+}
+
+var (
+	reAssert = regexp.MustCompile(`TRAP: failed Assert\("(.*?)"\), File: "(.*?)", Line: (\d+)`)
+	reUB     = regexp.MustCompile(`(\S+\.[ch]):(\d+):\d+: (runtime error: [^\n]*)`)
+	reASan   = regexp.MustCompile(`SUMMARY: AddressSanitizer: ([a-z\-]+) (\S+) in (\S+)`)
+	reLF     = regexp.MustCompile(`ERROR: libFuzzer: (out-of-memory|timeout)`)
+	reLeak   = regexp.MustCompile(`(?m)^DEDUP_TOKEN: \S*?--([A-Za-z_][A-Za-z0-9_]*)\s*$`)
+	rePanic  = regexp.MustCompile(`(PANIC|FATAL):\s+(.{0,80})`)
+	reDigits = regexp.MustCompile(`\d+`)
+)
+
+type hit struct{ sig, src string }
+
+// Extract pulls every signature out of one log's text.
+func Extract(text string) []struct{ Sig, Src string } {
+	var out []struct{ Sig, Src string }
+	add := func(sig, src string) { out = append(out, struct{ Sig, Src string }{sig, src}) }
+
+	for _, m := range reAssert.FindAllStringSubmatch(text, -1) {
+		add("Assert("+m[1]+") "+filepath.Base(m[2])+":"+m[3], m[2])
+	}
+	for _, m := range reUB.FindAllStringSubmatch(text, -1) {
+		// Operands differ on every hit, so digits collapse to N -- otherwise
+		// one site becomes a thousand signatures.
+		msg := reDigits.ReplaceAllString(m[3], "N")
+		if len(msg) > 90 {
+			msg = msg[:90]
+		}
+		add("UBSAN "+filepath.Base(m[1])+":"+m[2]+" "+msg, m[1])
+	}
+	for _, m := range reASan.FindAllStringSubmatch(text, -1) {
+		add("ASAN "+m[1]+" "+filepath.Base(m[2])+" in "+m[3], m[2])
+	}
+	for _, m := range reLF.FindAllStringSubmatch(text, -1) {
+		add("libFuzzer "+m[1], "")
+	}
+	for _, m := range reLeak.FindAllStringSubmatch(text, -1) {
+		add("LEAK in "+m[1], "")
+	}
+	for _, m := range rePanic.FindAllStringSubmatch(text, -1) {
+		add(m[1]+" "+strings.TrimSpace(m[2]), "")
+	}
+	return out
+}
+
+// reBanner is the per-target banner a sweep log carries.
+var reBanner = regexp.MustCompile(`^-{4} ([a-z_0-9]+_fuzzer) -{4}\s*$`)
+
+// AddReader streams a log rather than reading it whole.
+//
+// Not os.ReadFile: three workspaces here hold 8.1 GB of sweep logs between
+// them, and slurping one is how a census turns into an out-of-memory kill.
+// Signatures are line-oriented except the assert, which fits on one line
+// anyway, so a scanner sees everything a whole-file match would.
+//
+// The banner is tracked as it passes, so each signature is attributed to the
+// target that was running when it appeared.
+func (b *Builder) AddReader(workspace string, r io.Reader) error {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
+	target := ""
+	for sc.Scan() {
+		raw := sc.Bytes()
+		if !interesting(raw) {
+			continue
+		}
+		line := sc.Text()
+		if m := reBanner.FindStringSubmatch(line); m != nil {
+			target = m[1]
+			continue
+		}
+		for _, h := range Extract(line) {
+			b.record(workspace, target, h.Sig, h.Src)
+		}
+	}
+	return sc.Err()
+}
+
+// markers are the byte sequences every signature regex REQUIRES.
+//
+// A line with none of them cannot match any of them, so skipping it changes no
+// result. These logs are gigabytes of libFuzzer progress lines and six regexes
+// over every one of them is most of the run time; grep is fast for exactly
+// this reason -- it rejects almost everything before doing real work.
+//
+// Each entry is a literal the corresponding pattern cannot match without:
+//
+//	TRAP:               the assert form
+//	runtime error:      UBSan
+//	AddressSanitizer    ASan summaries
+//	libFuzzer           out-of-memory and timeout
+//	DEDUP_TOKEN         the leak form
+//	PANIC: / FATAL:     the server's own
+//	_fuzzer -           the target banner
+var markers = [][]byte{
+	[]byte("TRAP:"), []byte("runtime error:"), []byte("AddressSanitizer"),
+	[]byte("libFuzzer"), []byte("DEDUP_TOKEN"), []byte("PANIC:"),
+	[]byte("FATAL:"), []byte("_fuzzer -"),
+}
+
+func interesting(line []byte) bool {
+	for _, m := range markers {
+		if bytes.Contains(line, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// AddSweep records a log that holds MANY targets, one after another.
+//
+// The matrix driver writes one log per round rather than one per target, so a
+// whole-file Add attributes every signature in it to whichever target the
+// filename suggests -- which for a sweep log is none of them. Splitting on the
+// banner keeps the attribution the census exists to provide.
+func (b *Builder) AddSweep(workspace, text string) {
+	idx := reBanner.FindAllStringSubmatchIndex(text, -1)
+	if len(idx) == 0 {
+		b.Add(workspace, "", text)
+		return
+	}
+	for i, m := range idx {
+		target := text[m[2]:m[3]]
+		end := len(text)
+		if i+1 < len(idx) {
+			end = idx[i+1][0]
+		}
+		b.Add(workspace, target, text[m[1]:end])
+	}
+}
+
+// Builder accumulates signatures across workspaces.
+type Builder struct {
+	perWS   map[string]map[string]int
+	targets map[string]map[string]bool
+	sources map[string]map[string]bool
+	units   map[[2]string]int
+}
+
+// New starts a census.
+func New() *Builder {
+	return &Builder{
+		perWS:   map[string]map[string]int{},
+		targets: map[string]map[string]bool{},
+		sources: map[string]map[string]bool{},
+	}
+}
+
+// Add records one log's signatures.
+func (b *Builder) Add(workspace, target, text string) {
+	for _, h := range Extract(text) {
+		b.record(workspace, target, h.Sig, h.Src)
+	}
+}
+
+func (b *Builder) record(workspace, target, sig, src string) {
+	if b.perWS[sig] == nil {
+		b.perWS[sig] = map[string]int{}
+		b.targets[sig] = map[string]bool{}
+		b.sources[sig] = map[string]bool{}
+	}
+	b.perWS[sig][workspace]++
+	if target != "" {
+		b.targets[sig][target] = true
+	}
+	if src != "" {
+		b.sources[sig][src] = true
+	}
+}
+
+// Rows returns the census, busiest first.
+func (b *Builder) Rows() []Row {
+	var out []Row
+	for sig, per := range b.perWS {
+		r := Row{Signature: sig}
+		fams := map[string]bool{}
+		for ws, n := range per {
+			r.Hits += n
+			r.Workspaces = append(r.Workspaces, ws)
+			fams[Family(ws)] = true
+			// THE DIFFERENTIAL THAT MATTERS. A signature seen only on oriole*
+			// workspaces is OrioleDB's, because every oriole ref is a patched
+			// PostgreSQL of the same major being fuzzed vanilla right beside
+			// it. Seen on both, it is PostgreSQL's.
+			if strings.HasPrefix(ws, "oriole") {
+				r.OrioleWS = append(r.OrioleWS, ws)
+			} else {
+				r.VanillaWS = append(r.VanillaWS, ws)
+			}
+		}
+		r.OrioleOnly = len(r.OrioleWS) > 0 && len(r.VanillaWS) == 0
+		for t := range b.targets[sig] {
+			r.Targets = append(r.Targets, t)
+		}
+		for s := range b.sources[sig] {
+			r.Sources = append(r.Sources, s)
+			// Failing INSIDE OrioleDB's tree is the strong signal.
+			// Found-only-on-oriole is weak: fuzzing is random, so a rare
+			// PostgreSQL defect lands on whichever workspace got there first.
+			if strings.Contains(s, "orioledb") {
+				r.InOrioleDB = true
+			}
+		}
+		for f := range fams {
+			r.Families = append(r.Families, f)
+		}
+		sort.Strings(r.Workspaces)
+		sort.Strings(r.Families)
+		sort.Strings(r.Targets)
+		sort.Strings(r.OrioleWS)
+		sort.Strings(r.VanillaWS)
+		sort.Strings(r.Sources)
+		if len(r.Sources) > 4 {
+			r.Sources = r.Sources[:4]
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Hits != out[j].Hits {
+			return out[i].Hits > out[j].Hits
+		}
+		return out[i].Signature < out[j].Signature
+	})
+	return out
+}
+
+// Write emits census/signatures.json under dir.
+func (b *Builder) Write(dir string) error {
+	if err := os.MkdirAll(filepath.Join(dir, "census"), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(b.Rows(), "", " ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "census", "signatures.json"),
+		append(raw, '\n'), 0o644)
+}
+
+var reFamily = regexp.MustCompile(`^([a-z]+\d+)`)
+
+// Family is the major-version group a workspace belongs to.
+func Family(ws string) string {
+	if m := reFamily.FindStringSubmatch(ws); m != nil {
+		return m[1]
+	}
+	if i := strings.IndexAny(ws, "-"); i > 0 {
+		return ws[:i]
+	}
+	return ws
+}
+
+// AddReaderAs streams a log that belongs to one known target.
+func (b *Builder) AddReaderAs(workspace, target string, r io.Reader) error {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
+	for sc.Scan() {
+		for _, h := range Extract(sc.Text()) {
+			b.record(workspace, target, h.Sig, h.Src)
+		}
+	}
+	return sc.Err()
+}
+
+// EXECUTED UNITS AND ARTIFACTS, alongside the signatures.
+//
+// A target that executed zero units in every workspace contributed nothing to
+// the campaign, and that is INVISIBLE in the reproducer counts -- a dead
+// target files no crashes and so looks like a quiet one. The signature list
+// alone cannot say which of the two a silent target is.
+
+var reUnitsCensus = regexp.MustCompile(`stat::number_of_executed_units:\s+(\d+)`)
+
+// Units is per (workspace, target) executed units, accumulated as logs are
+// added.
+func (b *Builder) Units() map[[2]string]int { return b.units }
+
+// CountUnits records the executed units in one log.
+func (b *Builder) CountUnits(workspace, target, text string) {
+	if b.units == nil {
+		b.units = map[[2]string]int{}
+	}
+	// Summed across the workers of one target: each prints its own line, and
+	// the question is how much the TARGET did.
+	for _, m := range reUnitsCensus.FindAllStringSubmatch(text, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err == nil {
+			b.units[[2]string{workspace, target}] += n
+		}
+	}
+	// Recorded even at zero, so "ran and executed nothing" is distinguishable
+	// from "never ran".
+	if _, ok := b.units[[2]string{workspace, target}]; !ok {
+		b.units[[2]string{workspace, target}] = 0
+	}
+}

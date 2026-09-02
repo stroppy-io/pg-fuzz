@@ -1,0 +1,14 @@
+homepage: "https://postgresql.org"
+main_repo: "https://github.com/postgres/postgres"
+language: c
+# Local-only project: builds a bind-mounted PostgreSQL checkout rather than
+# cloning upstream master.  Not intended for submission to OSS-Fuzz -- see
+# projects/postgresql for the upstream integration this was derived from.
+base_os_version: ubuntu-24-04
+fuzzing_engines:
+  - libfuzzer
+  - honggfuzz
+  - afl
+sanitizers:
+  - address
+  - undefined

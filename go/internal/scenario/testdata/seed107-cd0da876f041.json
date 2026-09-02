@@ -1,0 +1,63 @@
+{
+  "seed": 107,
+  "failure": "after_set_tablespace:t0/t0: expected 6000 rows, got 0",
+  "notes": [],
+  "scenario": {
+    "seed": 107,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "table_lock",
+      "orioledb.default_compress": -1
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "numeric",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "multicolumn",
+          "partial"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_b",
+        "rows": 5000
+      }
+    ],
+    "steps": [
+      {
+        "op": "vacuum",
+        "table": "t0"
+      },
+      {
+        "op": "reindex",
+        "table": "t0"
+      },
+      {
+        "op": "insert_more",
+        "table": "t0"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t0"
+      },
+      {
+        "op": "move_index",
+        "table": "t0"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t0"
+      }
+    ]
+  }
+}

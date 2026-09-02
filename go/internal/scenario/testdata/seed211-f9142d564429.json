@@ -1,0 +1,124 @@
+{
+  "seed": 211,
+  "failure": "after_concurrent_ddl:t2/t2: probe failed: SELECT count(*) FROM t2 WHERE v > 0",
+  "notes": [],
+  "scenario": {
+    "seed": 211,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 5
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "4MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": "ts_a",
+    "writers": 4,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "int",
+        "compress": -1,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "numeric"
+        ],
+        "indexes": [
+          "spgist"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 500
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite",
+        "pk_extra": "int",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "multicolumn",
+          "partial",
+          "btree"
+        ],
+        "tablespace": null,
+        "index_tablespace": "ts_a",
+        "rows": 5000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "uuid",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "text"
+        ],
+        "indexes": [
+          "expression",
+          "btree",
+          "brin"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "concurrent_ddl",
+        "table": "t2"
+      },
+      {
+        "op": "move_across_partition",
+        "table": "t2"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t1"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t2"
+      },
+      {
+        "op": "concurrent_checkpoint",
+        "table": "t2"
+      },
+      {
+        "op": "concurrent_checkpoint",
+        "table": "t2"
+      },
+      {
+        "op": "attach_partition",
+        "table": "t0"
+      },
+      {
+        "op": "drop_column",
+        "table": "t0"
+      },
+      {
+        "op": "insert_more",
+        "table": "t0"
+      }
+    ]
+  }
+}

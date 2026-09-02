@@ -1,0 +1,66 @@
+{
+  "seed": 116,
+  "failure": "after_delete_half:t1/t1: orioledb_tbl_check: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\nconnection to server was lost",
+  "notes": [],
+  "scenario": {
+    "seed": 116,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 1
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": "ts_a",
+    "writers": 4,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "text",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "bigint[]",
+          "bigint"
+        ],
+        "indexes": [],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "int",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "jsonb"
+        ],
+        "indexes": [],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "delete_half",
+        "table": "t1"
+      }
+    ],
+    "oriole_conf": {
+      "orioledb.main_buffers": "8MB",
+      "orioledb.undo_circular_buffer_size": "4MB"
+    }
+  }
+}

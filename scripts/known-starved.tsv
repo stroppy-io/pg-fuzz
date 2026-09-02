@@ -1,0 +1,38 @@
+# Targets allowed to run below the starvation floor, with why and where the
+# evidence is. Format: target<TAB>reason<TAB>findings-ref<TAB>date-acknowledged
+#
+# This file is the difference between "we know" and "nobody looked". A target
+# here still failed the floor -- it is simply failing for a reason someone
+# wrote down and can be argued with. Entries older than 30 days are reported as
+# stale by check-starvation.sh, because a cause that was true a month ago may
+# have been fixed since.
+#
+# Remove an entry when the cause is fixed. If the gate then goes red, the cause
+# was not what the entry claimed.
+#
+# A ROW HERE EXCUSES LOW THROUGHPUT. IT DOES NOT EXCUSE A TARGET THAT NEVER RAN.
+# check-starvation.sh fails on "libFuzzer aborted during initial corpus
+# execution" regardless of anything written here, and that is deliberate.
+#
+# WRITE THE CONSEQUENCE, NOT THE CAUSE
+# ====================================
+# A row here for spi_query_fuzzer used to read "dies on the upstream VACUUM context leak, one
+# death per corpus replay". Every word of that is true and it hid the problem
+# for months, because it describes the MECHANISM and leaves the reader to infer
+# the cost -- and the obvious inference, "we lose one replay's worth of
+# throughput", was wrong by three orders of magnitude. The target had never
+# fuzzed at all. Say what the row costs, in numbers, or the next person will
+# infer something comfortable too.
+#
+# THAT ROW WAS REMOVED 2026-08-25, and the sequel is worth recording.
+# Its stated cause really was fixed: -detect_leaks=0 held, and the -und builds
+# now exit 0. But the target was still producing zero new units -- for a
+# completely different reason. Its seed corpus had grown to where REPLAY ALONE
+# outlasts -max_total_time, so every job ends at the execution count it reached
+# when replay finished and the mutation loop is never entered.
+#
+# The row had stopped describing anything true and was suppressing a live
+# failure, which is precisely what this file warns against. It is also why
+# check-starvation.sh's new INITED == DONE check is not suppressible: an
+# acknowledgement can excuse a target that runs badly, never one that does not
+# fuzz at all.

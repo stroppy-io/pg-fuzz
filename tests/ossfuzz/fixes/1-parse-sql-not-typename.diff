@@ -1,0 +1,13 @@
+diff --git a/projects/postgresql/fuzzer/simple_query_fuzzer.c b/projects/postgresql/fuzzer/simple_query_fuzzer.c
+index 2baccf8..80f9e5a 100644
+--- a/projects/postgresql/fuzzer/simple_query_fuzzer.c
++++ b/projects/postgresql/fuzzer/simple_query_fuzzer.c
+@@ -41,7 +41,7 @@ static void exec_simple_query(const char *query_string) {
+   ListCell *parsetree_item;
+ 
+   oldcontext = MemoryContextSwitchTo(MessageContext);
+-  parsetree_list = raw_parser(query_string, RAW_PARSE_TYPE_NAME);
++  parsetree_list = raw_parser(query_string, RAW_PARSE_DEFAULT);
+   MemoryContextSwitchTo(oldcontext);
+ 
+   foreach (parsetree_item, parsetree_list) {

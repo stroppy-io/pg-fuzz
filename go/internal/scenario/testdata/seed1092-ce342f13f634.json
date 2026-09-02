@@ -1,0 +1,112 @@
+{
+  "seed": 1092,
+  "failure": "after_load/t0: probe failed: SELECT count(*) FROM t0 WHERE v > 0",
+  "notes": [],
+  "scenario": {
+    "seed": 1092,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "4MB",
+      "orioledb.undo_circular_buffer_size": "1MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "timestamptz",
+        "compress": -1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "unique",
+          "brin"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "date",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "bigint[]",
+          "timestamptz"
+        ],
+        "indexes": [
+          "unique",
+          "expression"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 5000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "int",
+        "compress": -1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "bigint[]",
+          "numeric"
+        ],
+        "indexes": [
+          "partial"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "delete_half",
+        "table": "t1"
+      },
+      {
+        "op": "detach_partition",
+        "table": "t2"
+      },
+      {
+        "op": "insert_more",
+        "table": "t2"
+      },
+      {
+        "op": "reindex",
+        "table": "t2"
+      },
+      {
+        "op": "analyze",
+        "table": "t0"
+      },
+      {
+        "op": "insert_more",
+        "table": "t1"
+      }
+    ]
+  }
+}

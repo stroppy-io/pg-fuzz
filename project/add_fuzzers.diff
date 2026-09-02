@@ -1,0 +1,124 @@
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+--- a/src/backend/tcop/postgres.c	2025-11-10 22:53:58.000000000 +0100
++++ b/src/backend/tcop/postgres.c	2026-08-06 19:13:07.335336216 +0200
+@@ -128,6 +128,10 @@
+ /* max_stack_depth converted to bytes for speed of checking */
+ static long max_stack_depth_bytes = 100 * 1024L;
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++bool		fuzzer_first_run = true;
++#endif
++
+ /*
+  * Stack base pointer -- initialized by PostmasterMain and inherited by
+  * subprocesses (but see also InitPostmasterChild).
+@@ -493,10 +497,14 @@
+ {
+ 	int			result;
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	result = SocketBackend(inBuf);
++#else
+ 	if (whereToSendOutput == DestRemote)
+ 		result = SocketBackend(inBuf);
+ 	else
+ 		result = InteractiveBackend(inBuf);
++#endif
+ 	return result;
+ }
+ 
+@@ -2822,5 +2826,33 @@
+ }
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++/*
++ * Reset the transaction-command bookkeeping, for a fuzz harness that drives
++ * exec_simple_query() directly instead of going round PostgresMain's loop.
++ *
++ * xact_started is file-static, and PostgresMain clears it in its sigsetjmp
++ * recovery block with the comment "We don't have a transaction command open
++ * anymore" -- right after AbortCurrentTransaction().  A harness driving
++ * PostgresMain's own machinery cannot reach it, so its error path would leave
++ * the flag true with no transaction open, and the next start_xact_command()
++ * would conclude one was already running and start none.
++ *
++ * Scope, stated precisely because it was once overstated: this matters only
++ * for a harness that actually calls postgres.c's static start_xact_command()
++ * and finish_xact_command() -- protocol_fuzzer, which drives PostgresMain.
++ * simple_query_fuzzer has its OWN exec_simple_query() and never touches those,
++ * so the flag cannot go stale there and clearing it changes nothing.  It was
++ * briefly blamed for an Assert(ActiveSnapshotSet()) in that target on
++ * 2026-08-15; the real cause was the harness never pushing a snapshot at all.
++ * The export is correct on its own merits and costs nothing.
++ */
++void
++pgfuzz_reset_xact_started(void)
++{
++	xact_started = false;
++}
++#endif
++
+ static void
+ finish_xact_command(void)
+ {
+@@ -4245,6 +4253,11 @@
+ 	volatile bool idle_in_transaction_timeout_enabled = false;
+ 	volatile bool idle_session_timeout_enabled = false;
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	if (fuzzer_first_run)
++	{
++#endif							/* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
++
+ 	Assert(dbname != NULL);
+ 	Assert(username != NULL);
+ 
+@@ -4401,6 +4414,11 @@
+ 	/* Fire any defined login event triggers, if appropriate */
+ 	EventTriggerOnLogin();
+ 
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	fuzzer_first_run = false;
++	}
++#endif							/* FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION */
++
+ 	/*
+ 	 * POSTGRES main processing loop begins here
+ 	 *
+diff --git a/src/backend/utils/error/elog.c b/src/backend/utils/error/elog.c
+--- a/src/backend/utils/error/elog.c	2025-11-10 22:53:58.000000000 +0100
++++ b/src/backend/utils/error/elog.c	2026-08-06 19:12:55.658205032 +0200
+@@ -543,6 +543,31 @@
+ 	}
+
+ 	/* Emit the message to the right places */
+-	EmitErrorReport();
++#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
++	/*
++	 * Suppressed for fuzzing only, and only BELOW FATAL.  A fuzz target
++	 * rejects the overwhelming majority of its inputs, and reporting every
++	 * rejection costs more than the run does.
++	 *
++	 * The elevel test is not a refinement, it is the whole correctness of
++	 * this hunk.  errfinish() reaches this line only for NON-ERROR levels --
++	 * elevel == ERROR returns earlier through PG_RE_THROW() -- so an
++	 * unconditional suppression here covers WARNING/NOTICE/LOG as intended
++	 * AND FATAL/PANIC, which was never intended.  The consequence is that a
++	 * PANIC reached libFuzzer with zero PostgreSQL text: no message, no
++	 * statement, triage starting from a bare stack.  Measured on 2026-08-16
++	 * with a deliberate FATAL that printed nothing at all.
++	 *
++	 * The #ifdef is load-bearing too.  Without it this also silences the
++	 * *uninstrumented* server built from the same tree -- the one in
++	 * tmp_install that initdb, pg_ctl and psql use -- so a real postmaster
++	 * logs nothing at all, backends die without saying why, and every
++	 * attempt to use that server as an oracle is blind.
++	 */
++	if (edata->elevel >= FATAL)
++		EmitErrorReport();
++#else
++	EmitErrorReport();
++#endif
+ 
+ 	/* Now free up subsidiary data attached to stack entry, and release it */
+ 	FreeErrorDataContents(edata);

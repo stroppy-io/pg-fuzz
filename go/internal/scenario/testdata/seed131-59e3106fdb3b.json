@@ -1,0 +1,78 @@
+{
+  "seed": 131,
+  "failure": "vacuum: ERROR:  cannot update tuples during a parallel operation",
+  "notes": [],
+  "scenario": {
+    "seed": 131,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": -1
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "date",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "partial"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_b",
+        "rows": 500
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "composite",
+        "pk_extra": "numeric",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "timestamptz",
+          "bigint[]",
+          "text"
+        ],
+        "indexes": [
+          "hash",
+          "btree",
+          "multicolumn"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_a",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "rollback_ddl",
+        "table": "t1"
+      },
+      {
+        "op": "vacuum",
+        "table": "t1"
+      },
+      {
+        "op": "analyze",
+        "table": "t0"
+      },
+      {
+        "op": "prepare_2pc",
+        "table": "t1"
+      }
+    ]
+  }
+}

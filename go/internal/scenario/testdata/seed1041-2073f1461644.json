@@ -1,0 +1,87 @@
+{
+  "seed": 1041,
+  "failure": "setup: CREATE UNLOGGED TABLE t0 (i bigint NOT NULL, j bigint NOT NU -> ERROR:  partitioned tables cannot be unlogged",
+  "notes": [],
+  "scenario": {
+    "seed": 1041,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "32MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "on"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "heap",
+        "partitioned": true,
+        "pk": "single",
+        "pk_extra": "smallint",
+        "compress": 5,
+        "unlogged": true,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "uuid"
+        ],
+        "indexes": [
+          "gin"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 500
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "numeric",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "bigint[]"
+        ],
+        "indexes": [],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_b",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "move_index",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t0"
+      },
+      {
+        "op": "churn_evict",
+        "table": "t1"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t1"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t1"
+      },
+      {
+        "op": "concurrent_checkpoint",
+        "table": "t0"
+      }
+    ]
+  }
+}

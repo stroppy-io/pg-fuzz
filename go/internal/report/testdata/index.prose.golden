@@ -1,0 +1,18 @@
+pg17-ext-all campaigns
+pg17-ext-all · campaign history
+Every run, and how it moved
+One row per archived run, oldest first. Each links to that run's own frozen report. Nothing here is recomputed from live state — it all comes from write-once archives, so a run that happened cannot be edited by a later one.
+Runs
+The inputs column is a hash of everything that defines the experiment: the PostgreSQL commit, the patches, the plugin versions and the fuzzer sources. Two runs sharing it are comparable. When it changes, something underneath moved — the row says so, and comparing across that line needs care.
+It deliberately does not include this page or the report layout. Redesigning a report changes its bytes; it must not change what a run was.
+⊕ marks where the fingerprint definition widened to cover an input it had not been recording — the hash changed, the experiment did not. Runs either side are still comparable; what changed is how much of them is pinned. Only ⚠ means an input actually moved.
+What the gates let through, run by run
+Every rule that stops a ratchet crying wolf also hides something. Three do it here: an acknowledgement suppresses a target outright, the tolerance passes anything above a tenth of the record, and a floor earned under a different configuration is skipped as not comparable.
+Each is defensible for one run. Across many runs they become the question this table answers: what has been quietly unguarded, and for how long.
+Masked without a break, counting back from the newest run
+A target here has not been genuinely guarded for the number of consecutive runs shown. The longest streaks are the ones to read first — they are where a regression could have arrived unnoticed.
+HEAD — pg17-ext-all-20260828-214306-7ef7a089
+What the newest run pinned. This is the input set a replay would have to reproduce.
+The OSS-Fuzz clone is unmodified: every projects/pgfuzz-* entry is a symlink back into this repository. libFuzzer is linked statically into every target from the base image, which is pinned separately from the commit because builds run with --no-pull — so both are recorded.
+Fuzzer binaries
+The harness is half the experiment and used to go unrecorded. These are the binaries that produced the numbers above.

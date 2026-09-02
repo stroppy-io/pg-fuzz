@@ -1,0 +1,124 @@
+{
+  "seed": 1065,
+  "failure": "rollback_insert: psql:<stdin>:2: ERROR:  duplicate key value violates unique constraint \"index_bridge\"\nDETAIL:  Key (index_bridging_ctid)=((0,1)) already exists.",
+  "notes": [],
+  "scenario": {
+    "seed": 1065,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "repeatable_read",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "32MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "int",
+        "compress": -1,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "text",
+          "uuid",
+          "numeric"
+        ],
+        "indexes": [
+          "brin",
+          "gin"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 5000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "boolean",
+        "compress": 1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "numeric",
+          "uuid",
+          "bigint[]"
+        ],
+        "indexes": [
+          "gin"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 5000
+      },
+      {
+        "name": "t2",
+        "am": "heap",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "uuid",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "numeric",
+          "text"
+        ],
+        "indexes": [
+          "btree",
+          "partial"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 5000
+      }
+    ],
+    "steps": [
+      {
+        "op": "savepoint_partial",
+        "table": "t1"
+      },
+      {
+        "op": "detach_partition",
+        "table": "t2"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t2"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t1"
+      },
+      {
+        "op": "vacuum",
+        "table": "t0"
+      },
+      {
+        "op": "rollback_insert",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_ddl",
+        "table": "t1"
+      }
+    ]
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "seed": 0,
+  "failure": "after_load/t0: probe failed: SELECT count(*) FROM t0 WHERE v > 0",
+  "notes": [],
+  "scenario": {
+    "seed": 0,
+    "orioledb": true,
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "bigint[]",
+          "text"
+        ],
+        "indexes": [
+          "brin"
+        ],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 5000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "bigint",
+          "timestamptz"
+        ],
+        "indexes": [],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "drop_column",
+        "table": "t0"
+      },
+      {
+        "op": "attach_partition",
+        "table": "t1"
+      },
+      {
+        "op": "upsert",
+        "table": "t1"
+      },
+      {
+        "op": "restart_clean",
+        "table": "t0"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t1"
+      },
+      {
+        "op": "concurrent_write",
+        "table": "t0"
+      },
+      {
+        "op": "prepare_2pc",
+        "table": "t1"
+      }
+    ]
+  }
+}

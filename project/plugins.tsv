@@ -1,0 +1,92 @@
+# Where to get out-of-tree PostgreSQL extensions, and what they need.
+#
+# THIS FILE DOES NOT DECIDE VERSIONS. Which plugins a run includes, and at which
+# version, is a per-workspace decision -- it is the experiment variable, and
+# comparing pgaudit 16.1 against 17.1, or a plugin before and after a fix, is
+# exactly what workspaces are for. The `ref` column here is only a default for
+# when a workspace does not say.
+#
+# What IS global, because it is a property of the plugin rather than of any
+# experiment: where it lives, what it needs to build, whether it must be
+# preloaded, and what name CREATE EXTENSION wants.
+#
+#     plugins=pgaudit                 registry repo, registry default ref
+#     plugins=pgaudit@17.1            registry repo, THIS workspace's version
+#     plugins=x@https://git/x.git@v2  no registry involvement
+#     plugins=x@/path/to/tree         a working tree on this host
+#
+# Refs are verified by scripts/plugins-verify.sh, not trusted: tag conventions
+# are inconsistent (v3.0 vs v3.0.0, VERSION_4_16_3 vs 4.16.3, REL2_3_1 vs
+# 2.3.1), so a version number does not tell you the tag. Two of the seventeen
+# defaults below were wrong when first written, and the verifier is what caught
+# them.
+# pgfuzz fetches each into ~/.cache/pgfuzz/plugins/<name> on the HOST, copies it
+# into the source export at plugins/<name>, and build.sh builds it with PGXS
+# against the tree being built. Nothing is fetched inside the build container,
+# so a build stays reproducible and works without network.
+#
+# Everything here is pinned for PostgreSQL 17.10.
+#
+# Columns (tab-separated):
+#   name      extension name, and the CREATE EXTENSION name unless `create` says otherwise
+#   version   the release being pinned
+#   repo      git URL
+#   ref       tag or branch to check out
+#   apt       build dependencies to install in the image (space-separated, or -)
+#   preload   yes if it must be in shared_preload_libraries, else no
+#   create    the SQL name to CREATE EXTENSION, or - to skip (library-only)
+#   notes     why it may not build, or what it needs
+#
+# WHAT WILL NOT BUILD, AND WHY -- stated up front rather than discovered at 3am:
+#
+#   mysql_fdw    needs BOTH libmariadb-dev and libmariadb-dev-compat. The first
+#                installs headers under /usr/include/mariadb/; mysql_fdw.h does
+#                a plain #include <mysql.h>, so without the -compat package that
+#                provides the /usr/include/mysql/ path the build dies with
+#                "mysql.h: No such file or directory" after everything else has
+#                already built. Found 2026-08-24, on the first build that asked
+#                for the whole catalogue at once.
+#   oracle_fdw   needs Oracle Instant Client, which is proprietary and cannot be
+#                downloaded unauthenticated. Listed, marked, and skipped unless
+#                ORACLE_HOME is provided. Everything else here is open source.
+#
+#   postgis      builds, but pulls a large dependency chain (geos, proj, gdal,
+#                protobuf-c, json-c). Slow first build; fine afterwards.
+#
+#   timescaledb  requires cmake and its own build step; the .so is large.
+#   citus        likewise heavy, and wants a specific PG major -- 13.2 targets 17.
+#
+#   postgis, timescaledb -- and anything else using cmake or autogen/configure
+#                rather than plain PGXS -- currently FAIL THE BUILD, on purpose.
+#                The instrumented second pass only knows how to rebuild a PGXS
+#                plugin (clean, then CC/CXX/COPT so the sanitizer flags survive
+#                Makefile.global); the cmake/configure branch falls back to the
+#                uninstrumented first-pass artifact. Shipping that would mean an
+#                extension that loads, runs, reports coverage and detects
+#                nothing -- so the instrumentation check stops the build instead.
+#                Teaching those two build systems to take the sanitizer flags is
+#                what unblocks them; until then a workspace cannot request them.
+#
+# preload=yes matters: those libraries do their work from _PG_init() under
+# process_shared_preload_libraries_in_progress, and CREATE EXTENSION fails
+# outright without it. pgfuzz adds them to shared_preload_libraries
+# automatically; that is what the `preload=` workspace knob feeds.
+#
+#name	version	repo	ref	apt	preload	create	notes
+pgaudit	17.1	https://github.com/pgaudit/pgaudit.git	17.1	-	yes	pgaudit	logs statements; preload required
+pgauditlogtofile	1.7.6	https://github.com/fmbiete/pgauditlogtofile.git	v1.7.6	-	yes	pgauditlogtofile	companion to pgaudit; preload required
+pg_background	1.5	https://github.com/vibhorkum/pg_background.git	v1.5	-	no	pg_background	runs SQL in a background worker. Owner is vibhorkum, not vibhorkumar
+pg_repack	1.5.3	https://github.com/reorg/pg_repack.git	ver_1.5.3	liblz4-dev libzstd-dev	no	pg_repack	builds a client binary too
+timescaledb	2.23.1	https://github.com/timescale/timescaledb.git	2.23.1	cmake libssl-dev	yes	timescaledb	cmake build; preload required
+citus	13.2.0	https://github.com/citusdata/citus.git	v13.2.0	libcurl4-openssl-dev liblz4-dev libzstd-dev libicu-dev	yes	citus	heavy; preload required
+tds_fdw	2.0.4	https://github.com/tds-fdw/tds_fdw.git	v2.0.4	freetds-dev	no	tds_fdw	needs FreeTDS
+oracle_fdw	2.8.0	https://github.com/laurenz/oracle_fdw.git	ORACLE_FDW_2_8_0	-	no	oracle_fdw	SKIP: needs proprietary Oracle Instant Client
+mysql_fdw	2.9.3	https://github.com/EnterpriseDB/mysql_fdw.git	REL-2_9_3	libmariadb-dev libmariadb-dev-compat	no	mysql_fdw	builds against MariaDB client
+pg_cron	1.6.7	https://github.com/citusdata/pg_cron.git	v1.6.7	-	yes	pg_cron	background scheduler; preload required
+postgis	3.4.4	https://github.com/postgis/postgis.git	3.4.4	libgeos-dev libproj-dev libgdal-dev libjson-c-dev libprotobuf-c-dev protobuf-c-compiler libxml2-dev	no	postgis	autogen+configure, not plain PGXS
+orafce	4.16.3	https://github.com/orafce/orafce.git	VERSION_4_16_3	-	no	orafce	Oracle compatibility functions -- large SQL surface
+pgsql-http	1.7.0	https://github.com/pramsey/pgsql-http.git	v1.7.0	libcurl4-openssl-dev	no	http	extension is named "http", not pgsql-http
+pg_profile	4.11	https://github.com/zubkov-andrei/pg_profile.git	4.11	-	no	pg_profile	SQL-only; wants pg_stat_statements
+pg_show_plans	2.1.7	https://github.com/cybertec-postgresql/pg_show_plans.git	v2.1.7	-	yes	pg_show_plans	preload required. Tag is v2.1.7, not 2.1.7
+pg_stat_kcache	2.3.1	https://github.com/powa-team/pg_stat_kcache.git	REL2_3_1	-	yes	pg_stat_kcache	preload required; wants pg_stat_statements
+credcheck	3.0	https://github.com/HexaCluster/credcheck.git	v3.0	-	yes	credcheck	password policy hooks; preload required. Tag is v3.0, not v3.0.0 -- the repo also has up to v5.0 if a newer one is wanted

@@ -1,0 +1,1314 @@
+<title>PG17 Fuzz Soak</title>
+<style>
+/* pg-fuzz report design system.
+ *
+ * SHARED by every report: the per-run snapshot (render-final-report.py) and
+ * the campaign HEAD index (campaign-index.py). It lived in ~/pgfuzz as a
+ * fragment extracted from an old report -- outside the repo, unversioned, and
+ * each renderer then added its own near-identical table rules. Two pages that
+ * are meant to look like one product drifted apart every time either changed.
+ *
+ * Inlined at render time rather than linked: artifact pages run under a CSP
+ * that blocks external stylesheets, and an archived report must still render
+ * years later from a directory with no network.
+ */
+  :root {
+    --paper:      #eceff3;
+    --surface:    #ffffff;
+    --surface-2:  #f4f6f9;
+    --ink:        #161b22;
+    --ink-2:      #39424f;
+    --slate:      #5f6a79;
+    --hairline:   #d3d9e1;
+    --hairline-2: #e3e7ed;
+    --copper:     #a85327;
+    --copper-dim: #c08055;
+
+    --sev-confirmed: #a3232f;
+    --sev-artifact:  #8a6410;
+    --sev-fixed:     #1d6a4c;
+    --sev-open:      #2c5b8a;
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --measure: 74ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #10141a;
+      --surface:    #171d25;
+      --surface-2:  #1d242e;
+      --ink:        #e4e8ee;
+      --ink-2:      #bcc5d1;
+      --slate:      #8b96a5;
+      --hairline:   #2c3540;
+      --hairline-2: #232b35;
+      --copper:     #d98a55;
+      --copper-dim: #a86b42;
+
+      --sev-confirmed: #e2707a;
+      --sev-artifact:  #d2a548;
+      --sev-fixed:     #5fb590;
+      --sev-open:      #7aa9d8;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #10141a;
+    --surface:    #171d25;
+    --surface-2:  #1d242e;
+    --ink:        #e4e8ee;
+    --ink-2:      #bcc5d1;
+    --slate:      #8b96a5;
+    --hairline:   #2c3540;
+    --hairline-2: #232b35;
+    --copper:     #d98a55;
+    --copper-dim: #a86b42;
+    --sev-confirmed: #e2707a;
+    --sev-artifact:  #d2a548;
+    --sev-fixed:     #5fb590;
+    --sev-open:      #7aa9d8;
+  }
+
+  :root[data-theme="light"] {
+    --paper:      #eceff3;
+    --surface:    #ffffff;
+    --surface-2:  #f4f6f9;
+    --ink:        #161b22;
+    --ink-2:      #39424f;
+    --slate:      #5f6a79;
+    --hairline:   #d3d9e1;
+    --hairline-2: #e3e7ed;
+    --copper:     #a85327;
+    --copper-dim: #c08055;
+    --sev-confirmed: #a3232f;
+    --sev-artifact:  #8a6410;
+    --sev-fixed:     #1d6a4c;
+    --sev-open:      #2c5b8a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- shell ---------- */
+
+  .shell {
+    display: grid;
+    grid-template-columns: 15.5rem minmax(0, 1fr);
+    gap: 0;
+    max-width: 78rem;
+    margin: 0 auto;
+    align-items: start;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.75rem 1.5rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--hairline);
+    display: flex;
+    flex-direction: column;
+    gap: 1.4rem;
+  }
+
+  .rail-mark {
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--copper);
+  }
+  .rail-mark b { display: block; color: var(--ink); letter-spacing: .1em; font-weight: 600; }
+
+  nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; }
+  nav a {
+    display: flex;
+    gap: .65rem;
+    align-items: baseline;
+    padding: .3rem 0;
+    color: var(--slate);
+    text-decoration: none;
+    font-size: .875rem;
+    border-bottom: 1px solid transparent;
+    transition: color .12s ease;
+  }
+  nav a .n {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--copper-dim);
+    font-variant-numeric: tabular-nums;
+    min-width: 1.2rem;
+  }
+  nav a:hover { color: var(--ink); }
+  nav a.here { color: var(--ink); font-weight: 600; }
+  nav a.here .n { color: var(--copper); }
+  nav a:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+
+  main {
+    padding: 2.75rem 3rem 7rem;
+    min-width: 0;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead { margin-bottom: 3.5rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .72rem;
+    letter-spacing: .19em;
+    text-transform: uppercase;
+    color: var(--copper);
+    margin: 0 0 .9rem;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(2.1rem, 4.4vw, 3.15rem);
+    line-height: 1.08;
+    font-weight: 600;
+    letter-spacing: -.015em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.115rem;
+    line-height: 1.58;
+    color: var(--ink-2);
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  /* ---------- sections ---------- */
+
+  section { padding-top: 3.4rem; scroll-margin-top: 1rem; }
+  section + section { border-top: 1px solid var(--hairline); margin-top: 3.4rem; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: clamp(1.5rem, 2.6vw, 1.95rem);
+    line-height: 1.2;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0 0 1.15rem;
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--serif);
+    font-size: 1.19rem;
+    font-weight: 600;
+    line-height: 1.32;
+    margin: 2.3rem 0 .55rem;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--slate);
+    font-weight: 600;
+    margin: 2rem 0 .7rem;
+  }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 1.05rem; }
+  ul, ol { margin: 0 0 1.05rem; padding-left: 1.15rem; }
+  li { margin-bottom: .42rem; }
+  li::marker { color: var(--copper-dim); }
+
+  a { color: var(--ink); text-decoration-color: var(--copper); text-underline-offset: 2px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline-2);
+    padding: .06em .32em;
+    white-space: nowrap;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: .8rem;
+    line-height: 1.58;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--copper-dim);
+    padding: .95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0 0 1.25rem;
+  }
+  pre code { background: none; border: 0; padding: 0; white-space: pre; font-size: inherit; }
+
+  /* ---------- eli5 ---------- */
+
+  .eli5 {
+    background: var(--surface-2);
+    border-top: 1px solid var(--hairline-2);
+    border-bottom: 1px solid var(--hairline-2);
+    padding: 1rem 1.2rem .35rem;
+    margin: 0 0 1.3rem;
+    max-width: var(--measure);
+  }
+  .eli5::before {
+    content: "In plain terms";
+    display: block;
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--copper);
+    margin-bottom: .5rem;
+  }
+  .eli5 p { margin-bottom: .7rem; }
+  .eli5 p:last-child { margin-bottom: .65rem; }
+
+  /* ---------- glossary ---------- */
+
+  dl.gloss { max-width: var(--measure); margin: 0 0 1.6rem; }
+  dl.gloss dt {
+    font-family: var(--mono);
+    font-size: .82rem;
+    margin: 1.05rem 0 .3rem;
+  }
+  dl.gloss dt code { background: none; border: 0; padding: 0; font-size: 1em; }
+  dl.gloss dt::before {
+    content: "";
+    display: inline-block;
+    width: .8rem;
+    border-top: 1px solid var(--copper-dim);
+    vertical-align: middle;
+    margin-right: .55rem;
+  }
+  dl.gloss dd { margin: 0 0 0 1.35rem; color: var(--ink-2); }
+
+  /* ---------- status pills ---------- */
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .38rem;
+    font-family: var(--mono);
+    font-size: .67rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--slate);
+  }
+  .pill::before {
+    content: "";
+    width: .46rem; height: .46rem;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+  .pill.confirmed { color: var(--sev-confirmed); }
+  .pill.artifact  { color: var(--sev-artifact); }
+  .pill.fixed     { color: var(--sev-fixed); }
+  .pill.open      { color: var(--sev-open); }
+
+  /* ---------- tables ---------- */
+
+  .scroller { overflow-x: auto; margin: 0 0 1.5rem; border-bottom: 1px solid var(--hairline); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  caption {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: .7rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--slate);
+    padding-bottom: .6rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .58rem .8rem .58rem 0;
+    border-bottom: 1px solid var(--hairline-2);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--slate);
+    font-weight: 600;
+    border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; padding-right: 1.1rem; }
+  td.mono { font-family: var(--mono); font-size: .8rem; white-space: nowrap; }
+  .dim { color: var(--slate); }
+
+  /* ---------- figure strip ---------- */
+
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0;
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+    margin: 0 0 2.2rem;
+  }
+  .fig { padding: 1.05rem 1.1rem 1.1rem 0; }
+  .fig + .fig { border-left: 1px solid var(--hairline-2); padding-left: 1.1rem; }
+  .fig .v {
+    font-family: var(--mono);
+    font-size: 1.6rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    display: block;
+    line-height: 1.1;
+  }
+  .fig .k {
+    font-family: var(--mono);
+    font-size: .67rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--slate);
+    display: block;
+    margin-top: .4rem;
+  }
+
+  /* ---------- finding entries ---------- */
+
+  .entry { padding: 1.5rem 0; border-bottom: 1px solid var(--hairline-2); max-width: var(--measure); }
+  .entry:last-child { border-bottom: 0; }
+  .entry-head { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: baseline; margin-bottom: .5rem; }
+  .entry-head h3 { margin: 0; flex: 1 1 22rem; }
+  .entry .meta {
+    font-family: var(--mono);
+    font-size: .72rem;
+    color: var(--slate);
+    margin: 0 0 .8rem;
+  }
+
+  .verdict {
+    max-width: var(--measure);
+    border-left: 2px solid var(--copper);
+    padding: .1rem 0 .1rem 1rem;
+    margin: 0 0 1.15rem;
+    font-size: .96rem;
+    color: var(--ink-2);
+  }
+  .verdict strong { color: var(--ink); }
+
+  hr.rule { border: 0; border-top: 1px solid var(--hairline); margin: 2.4rem 0; max-width: var(--measure); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.6rem;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--mono);
+    font-size: .74rem;
+    color: var(--slate);
+    max-width: var(--measure);
+  }
+
+  @media (max-width: 62rem) {
+    .shell { grid-template-columns: minmax(0, 1fr); }
+    .rail {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--hairline);
+      padding: 1.6rem 1.5rem;
+    }
+    nav ol { flex-direction: row; flex-wrap: wrap; gap: .2rem 1.1rem; }
+    main { padding: 2rem 1.5rem 5rem; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; scroll-behavior: auto !important; }
+  }
+  html { scroll-behavior: smooth; }
+
+/* ---------- shared data table ----------
+ * One class for both reports. render-final-report used .cells and
+ * campaign-index used .runs, with rules that differed only by accident.
+ */
+table.cells, table.runs {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.4rem;
+  font-family: var(--mono);
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+}
+table.cells th, table.cells td,
+table.runs th,  table.runs td {
+  padding: .45rem .6rem;
+  text-align: right;
+  border-bottom: 1px solid var(--hairline-2);
+}
+table.cells th, table.runs th {
+  font-weight: 600;
+  font-size: .68rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--slate);
+  border-bottom: 1px solid var(--hairline);
+}
+table.cells th:first-child, table.cells td:first-child,
+table.runs th:first-child,  table.runs td:first-child { text-align: left; }
+table.cells td.t, table.runs td.t { font-weight: 600; color: var(--ink); }
+table.cells tr:hover td, table.runs tr:hover td { background: var(--surface-2); }
+
+/* wide content scrolls in its own box; the page body never scrolls sideways */
+.wrap, .scroller { overflow-x: auto; margin: 0 0 1.4rem; }
+
+/* ---------- shared annotations ---------- */
+.nb {
+  border-left: 3px solid var(--sev-artifact);
+  background: var(--surface-2);
+  padding: .5rem .9rem;
+  margin: .8rem 0;
+  max-width: var(--measure);
+  font-size: .9rem;
+}
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: .5rem .9rem; margin: .6rem 0 0; }
+.kv div { border-left: 2px solid var(--hairline); padding-left: .55rem; }
+.kv .v { display: block; font-family: var(--mono); font-size: .9rem; font-variant-numeric: tabular-nums; }
+.kv .k { display: block; font-size: .66rem; letter-spacing: .09em; text-transform: uppercase; color: var(--slate); }
+
+.tgt { border-top: 2px solid var(--hairline); padding-top: 1.1rem; margin: 0 0 1.6rem; max-width: var(--measure); }
+.tgt h3 { font-family: var(--mono); font-size: .95rem; margin: 0 0 .2rem; color: var(--copper); }
+.tgt .feeds { color: var(--slate); font-size: .86rem; margin: 0 0 .7rem; }
+
+/* deltas, used by the HEAD index */
+.cfg    { font-size: .72rem; color: var(--slate); }
+.cfgchg { color: var(--sev-artifact); font-weight: 600; }
+.delta-up { color: var(--sev-fixed); }
+.delta-dn { color: var(--sev-confirmed); }
+
+</style>
+<div class="shell">
+<div class="rail"><div class="rail-mark"><b>pg-fuzz</b>final report</div><nav aria-label="Sections"><ol>
+<li><a href="#summary"><span class="n">01</span><span>What this is</span></a></li>
+<li><a href="#how"><span class="n">02</span><span>How fuzzing works here</span></a></li>
+<li><a href="#run"><span class="n">03</span><span>The run</span></a></li>
+<li><a href="#cells"><span class="n">04</span><span>Every target</span></a></li>
+<li><a href="#coverage"><span class="n">05</span><span>Coverage</span></a></li>
+<li><a href="#ratchet"><span class="n">06</span><span>The ratchet</span></a></li>
+<li><a href="#patches"><span class="n">07</span><span>Source changes</span></a></li>
+<li><a href="#limits"><span class="n">08</span><span>Limits &amp; open items</span></a></li>
+<li><a href="#bundle"><span class="n">09</span><span>The bundle</span></a></li>
+</ol></nav></div><main>
+<header class="masthead">
+<div class="eyebrow">PostgreSQL 17.10 &middot; patched distribution &middot; fuzzing campaign</div>
+<h1>A soak run against PostgreSQL 17.10</h1>
+<p class="standfirst">Twenty-three fuzz targets, two sanitizer builds, run continuously and stopped on a schedule at 08:00 on 27 August 2026. This is what ran, what it covered, and what was changed to make it run.</p>
+</header>
+<section id="summary"><h2>What this is</h2>
+<div class="eli5"><p><b>Fuzzing</b> means feeding a program millions of generated inputs and watching for it to crash or misbehave. You keep the inputs that reach code nothing has reached before; over time that collection &mdash; the <b>corpus</b> &mdash; grows into a set of inputs that exercises the program broadly.</p><p>This report covers one continuous run against PostgreSQL 17.10 as shipped in the patched distribution, with third-party extensions loaded. It reports the machinery and the measurements. Defect detail is deliberately kept to counts and categories.</p></div>
+<div class="figures">
+<div class="fig"><span class="v">23</span><span class="k">fuzz targets</span></div>
+<div class="fig"><span class="v">2</span><span class="k">sanitizer builds</span></div>
+<div class="fig"><span class="v">46</span><span class="k">target &times; build cells</span></div>
+<div class="fig"><span class="v">2,344,269</span><span class="k">corpus inputs kept</span></div>
+<div class="fig"><span class="v">43.9%</span><span class="k">of the server executed</span></div>
+<div class="fig"><span class="v">782</span><span class="k">ratchet floors held</span></div>
+<div class="fig"><span class="v">8</span><span class="k">source changes listed</span></div>
+</div>
+<p>Every one of the 23 targets was fuzzing when the run was stopped. That is worth stating plainly because it was not true at the start of the week: several targets were replaying their saved inputs and never generating new ones, which produces confident-looking logs and no testing at all. Finding and fixing that is a large part of what this campaign did.</p>
+</section>
+<section id="how"><h2>How fuzzing works here</h2>
+<div class="eli5"><p>A <b>fuzz target</b> is a small program that takes a chunk of bytes and feeds it into one part of PostgreSQL. The fuzzer generates bytes, runs the target, and watches which lines of code get executed.</p><p>An input that reaches new code is <b>kept</b>; one that does not is thrown away. The kept inputs are the corpus. Starting a run means <b>replaying</b> the whole corpus first, which costs time but establishes the baseline; only after that does the fuzzer start <b>mutating</b> &mdash; making small random changes to look for new behaviour.</p><p>A <b>sanitizer</b> is a compiler setting that makes the program check itself as it runs. <b>ASan</b> (address) catches reads and writes outside valid memory. <b>UBSan</b> (undefined behaviour) catches operations the C language does not define, such as signed overflow. The same target is built twice, once under each, because they detect different things.</p></div>
+<p>Two builds were fuzzed &mdash; one ASan, one UBSan &mdash; giving 46 target &times; build cells. A third build, compiled for coverage measurement rather than bug detection, is used only to answer &ldquo;which code did the corpus actually reach?&rdquo;</p>
+</section>
+<section id="run"><h2>The run</h2>
+<p>The run was stopped on a timer at <b>2026-08-27 08:00:10</b> local time, on request, rather than at a natural end. Nothing was mid-write; the stop is a clean shutdown that lets each target finish its current slice.</p>
+<div class="eli5"><p>The run used <b>soak</b> mode: targets are kept continuously busy from a shared pool rather than run in fixed rounds. Rounds restart every target on a schedule, and each restart pays the replay cost again &mdash; with a corpus of this size that was consuming most of the machine's time. Soak pays replay once.</p></div>
+<div class="wrap"><table class="cells"><tr><th>Build</th><th>Sanitizer</th><th>Targets</th><th>Corpus inputs</th></tr>
+<tr><td class="t">pg17-ext-all-add</td><td>ASan</td><td>23</td><td>1,141,567</td></tr>
+<tr><td class="t">pg17-ext-all-und</td><td>UBSan</td><td>23</td><td>1,202,702</td></tr>
+<tr><td class="t">total</td><td></td><td></td><td>2,344,269</td></tr>
+</table></div></section>
+<section id="runtime"><h2>How long it ran</h2>
+<div class="figures">
+<div class="fig"><span class="v">10.5 h</span><span class="k">last run</span></div>
+<div class="fig"><span class="v">82 h</span><span class="k">all runs</span></div>
+<div class="fig"><span class="v">1,495</span><span class="k">slices of work</span></div>
+<div class="fig"><span class="v">748</span><span class="k">core-hours of machine</span></div>
+</div>
+<div class="wrap"><table class="cells"><tr><th></th><th>Runs</th><th>Slices</th><th>Hours</th><th>Period</th></tr>
+<tr><td class="t">Most recent run</td><td>1</td><td>843</td><td>10.5</td><td>2026-08-28 20:44 &rarr; 2026-08-29 07:12</td></tr>
+<tr><td class="t">Whole campaign</td><td>8</td><td>1,495</td><td>82</td><td>2026-08-24 19:20 &rarr; 2026-08-29 07:12</td></tr>
+</table></div>
+<div class="nb">Runs are detected from the slices themselves &mdash; nothing records where one campaign ends and the next begins, but a slice lasts at least 900s, so an hour in which none STARTED means nothing was running. The hours column sums those run spans and therefore excludes the gaps between them: first slice to last is 108 hours, against 82 of actual running. Processor time actually spent fuzzing is the stricter measure again and is not stated &mdash; the per-slice budget was not recorded before 2026-08-30 (0 of 1,495 rows carry it so far).</div>
+<div class="nb"><b>748 core-hours</b> is how much machine the campaign was given: 1,495 slices x 1800s x 1 worker(s), every observed slice log agreeing on both. The multiplication is exact; what is estimated is only that these rows carried no budget of their own, and the figure is offered because every slice log still on disk agrees on the cost. Had they disagreed, nothing would appear here rather than an average over a mixed population.</div>
+<div class="nb">That is machine ALLOCATED, not processor time burned, and the two diverge enormously by target. Measured this session: <code>spi_query</code> ran at 94&ndash;100% of a core while <code>simple_query</code> sat at 2&ndash;7%, waiting on the backend rather than computing. Consumption is sampled nowhere, and the containers are <code>--rm</code>, so their cgroup counters go with them.</div>
+</section>
+<section id="cells"><h2>Every target</h2>
+<div class="eli5"><p>One entry per fuzz target. <b>Corpus</b> is how many inputs that target has kept. <b>Execs</b> is how many inputs it ran in its final slice. <b>New</b> is how many of those reached code nothing had reached before &mdash; a low number late in a long run is expected and means the easy ground is covered. <b>Floor</b> is the ratchet floor explained below.</p></div>
+<div class="wrap"><table class="cells"><tr><th>Target</th><th>ASan corpus</th><th>ASan execs</th><th>ASan new</th><th>UBSan corpus</th><th>UBSan execs</th><th>UBSan new</th><th>Artifacts</th><th>Findings</th></tr>
+<tr><td class="t">backend_types</td><td>196,740</td><td>13,630,832</td><td>355</td><td>207,195</td><td>17,945,345</td><td>414</td><td>2</td><td>&mdash;</td></tr>
+<tr><td class="t">binary_recv</td><td>16,292</td><td>299,025</td><td>68</td><td>14,269</td><td>303,191</td><td>57</td><td>7</td><td>&mdash;</td></tr>
+<tr><td class="t">config_file</td><td>38,360</td><td>11,937,338</td><td>86</td><td>64,880</td><td>10,541,462</td><td>51</td><td>3</td><td>1</td></tr>
+<tr><td class="t">conninfo</td><td>17,452</td><td>132,868,557</td><td>0</td><td>21,227</td><td>127,679,138</td><td>8</td><td>12</td><td>&mdash;</td></tr>
+<tr><td class="t">datetime</td><td>34,927</td><td>5,665,934</td><td>22</td><td>28,443</td><td>2,931,423</td><td>13</td><td>32</td><td>1</td></tr>
+<tr><td class="t">encoding</td><td>16,835</td><td>82,627,430</td><td>4</td><td>14,598</td><td>50,637,156</td><td>3</td><td>13</td><td>1</td></tr>
+<tr><td class="t">extension_funcs</td><td>5,042</td><td>6,752</td><td>27</td><td>4,694</td><td>5,033</td><td>7</td><td>1,262</td><td>1</td></tr>
+<tr><td class="t">formatting</td><td>79,842</td><td>43,785,464</td><td>83</td><td>85,076</td><td>29,255,457</td><td>86</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><td class="t">geo</td><td>74,422</td><td>51,438,590</td><td>67</td><td>76,942</td><td>43,622,144</td><td>68</td><td>1</td><td>&mdash;</td></tr>
+<tr><td class="t">hba_file</td><td>12,116</td><td>12,103</td><td>0</td><td>12,760</td><td>14,799</td><td>6</td><td>86</td><td>&mdash;</td></tr>
+<tr><td class="t">json_parser</td><td>39,853</td><td>63,566,267</td><td>25</td><td>34,201</td><td>44,653,412</td><td>11</td><td>4</td><td>&mdash;</td></tr>
+<tr><td class="t">jsonb</td><td>76,541</td><td>12,914,998</td><td>219</td><td>87,363</td><td>25,319,880</td><td>157</td><td>11</td><td>&mdash;</td></tr>
+<tr><td class="t">jsonpath</td><td>47,178</td><td>1,255,850</td><td>87</td><td>129,811</td><td>18,703,280</td><td>228</td><td>117</td><td>&mdash;</td></tr>
+<tr><td class="t">network</td><td>5,543</td><td>67,796,222</td><td>7</td><td>3,884</td><td>61,284,815</td><td>2</td><td>1</td><td>&mdash;</td></tr>
+<tr><td class="t">numeric</td><td>13,367</td><td>11,190,385</td><td>7</td><td>9,635</td><td>5,586,454</td><td>6</td><td>1</td><td>&mdash;</td></tr>
+<tr><td class="t">protocol</td><td>108,076</td><td>15,646</td><td>0</td><td>25,156</td><td>286,394</td><td>354</td><td>26</td><td>1</td></tr>
+<tr><td class="t">raw_parser</td><td>185,711</td><td>7,748,835</td><td>393</td><td>188,209</td><td>9,979,571</td><td>482</td><td>3</td><td>&mdash;</td></tr>
+<tr><td class="t">regex</td><td>7,325</td><td>30,984</td><td>49</td><td>6,201</td><td>5,278</td><td>0</td><td>44</td><td>&mdash;</td></tr>
+<tr><td class="t">scalar_types</td><td>15,772</td><td>73,530,452</td><td>6</td><td>12,837</td><td>42,599,289</td><td>2</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><td class="t">simple_query</td><td>18,385</td><td>18,386</td><td>0</td><td>24,949</td><td>24,950</td><td>0</td><td>3</td><td>1</td></tr>
+<tr><td class="t">spi_query</td><td>15,826</td><td>33,554</td><td>18</td><td>23,692</td><td>23,693</td><td>0</td><td>38</td><td>5</td></tr>
+<tr><td class="t">tsearch</td><td>115,282</td><td>17,591,752</td><td>161</td><td>126,168</td><td>19,675,956</td><td>168</td><td>3</td><td>&mdash;</td></tr>
+<tr><td class="t">xlogreader</td><td>680</td><td>60,539,726</td><td>0</td><td>512</td><td>199,390</td><td>0</td><td>465</td><td>1</td></tr>
+</table></div>
+<div class="tgt"><h3 id="t-backend_types_fuzzer">backend_types_fuzzer</h3>
+<p class="feeds"><b>Input:</b> A binary blob per built-in data type. <b>Reaches:</b> the input/output and send/receive functions of PostgreSQL's built-in types.</p>
+<div class="kv">
+<div><span class="v">196,740</span><span class="k">ASan corpus</span></div>
+<div><span class="v">207,195</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">13,630,832</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">17,945,345</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">61,381,386</span><span class="k">exec floor</span></div>
+<div><span class="v">28549</span><span class="k">rate floor /s</span></div>
+<div><span class="v">2</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">38,718</span><span class="k">lines covered</span></div>
+<div><span class="v">7.01%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-binary_recv_fuzzer">binary_recv_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Binary wire representations of values. <b>Reaches:</b> the binary receive path used by COPY BINARY and the extended protocol.</p>
+<div class="kv">
+<div><span class="v">16,292</span><span class="k">ASan corpus</span></div>
+<div><span class="v">14,269</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">299,025</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">303,191</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">299,025</span><span class="k">exec floor</span></div>
+<div><span class="v">166</span><span class="k">rate floor /s</span></div>
+<div><span class="v">2</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">5</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">9,183</span><span class="k">lines covered</span></div>
+<div><span class="v">1.67%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-config_file_fuzzer">config_file_fuzzer</h3>
+<p class="feeds"><b>Input:</b> postgresql.conf text. <b>Reaches:</b> the GUC configuration-file parser and value validators.</p>
+<div class="kv">
+<div><span class="v">38,360</span><span class="k">ASan corpus</span></div>
+<div><span class="v">64,880</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">11,937,338</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">10,541,462</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">12,263,741</span><span class="k">exec floor</span></div>
+<div><span class="v">6809</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">1</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">2</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">4,854</span><span class="k">lines covered</span></div>
+<div><span class="v">0.88%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-conninfo_fuzzer">conninfo_fuzzer</h3>
+<p class="feeds"><b>Input:</b> libpq connection strings and URIs. <b>Reaches:</b> connection-string and URI parsing in libpq.</p>
+<div class="kv">
+<div><span class="v">17,452</span><span class="k">ASan corpus</span></div>
+<div><span class="v">21,227</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">132,868,557</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">127,679,138</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">132,868,557</span><span class="k">exec floor</span></div>
+<div><span class="v">73775</span><span class="k">rate floor /s</span></div>
+<div><span class="v">6</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">6</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">968</span><span class="k">lines covered</span></div>
+<div><span class="v">6.09%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-datetime_fuzzer">datetime_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Date, time, interval and timezone text. <b>Reaches:</b> date/time parsing, formatting and timezone resolution.</p>
+<div class="kv">
+<div><span class="v">34,927</span><span class="k">ASan corpus</span></div>
+<div><span class="v">28,443</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">5,665,934</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">2,931,423</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">36,747,093</span><span class="k">exec floor</span></div>
+<div><span class="v">111527</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">31</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">1</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">7,034</span><span class="k">lines covered</span></div>
+<div><span class="v">1.28%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-encoding_fuzzer">encoding_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Byte strings in various server encodings. <b>Reaches:</b> encoding validation and conversion between character sets.</p>
+<div class="kv">
+<div><span class="v">16,835</span><span class="k">ASan corpus</span></div>
+<div><span class="v">14,598</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">82,627,430</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">50,637,156</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">82,627,430</span><span class="k">exec floor</span></div>
+<div><span class="v">45879</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">5</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">8</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">4,527</span><span class="k">lines covered</span></div>
+<div><span class="v">0.82%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-extension_funcs_fuzzer">extension_funcs_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Argument tuples for extension SQL functions. <b>Reaches:</b> functions exposed by the loaded third-party extensions.</p>
+<div class="kv">
+<div><span class="v">5,042</span><span class="k">ASan corpus</span></div>
+<div><span class="v">4,694</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">6,752</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">5,033</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">230,880</span><span class="k">exec floor</span></div>
+<div><span class="v">240</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">1,260</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">2</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">119,686</span><span class="k">lines covered</span></div>
+<div><span class="v">21.59%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-formatting_fuzzer">formatting_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Format strings and values for to_char/to_date. <b>Reaches:</b> the formatting family (to_char, to_date, to_number, to_timestamp).</p>
+<div class="kv">
+<div><span class="v">79,842</span><span class="k">ASan corpus</span></div>
+<div><span class="v">85,076</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">43,785,464</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">29,255,457</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">43,785,464</span><span class="k">exec floor</span></div>
+<div><span class="v">24312</span><span class="k">rate floor /s</span></div>
+<div><span class="v">6,876</span><span class="k">lines covered</span></div>
+<div><span class="v">1.25%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-geo_fuzzer">geo_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Geometric literals - points, boxes, paths, polygons. <b>Reaches:</b> the geometric types and their operators.</p>
+<div class="kv">
+<div><span class="v">74,422</span><span class="k">ASan corpus</span></div>
+<div><span class="v">76,942</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">51,438,590</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">43,622,144</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">51,438,590</span><span class="k">exec floor</span></div>
+<div><span class="v">28561</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">5,059</span><span class="k">lines covered</span></div>
+<div><span class="v">0.92%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-hba_file_fuzzer">hba_file_fuzzer</h3>
+<p class="feeds"><b>Input:</b> pg_hba.conf text. <b>Reaches:</b> the host-based authentication file parser.</p>
+<div class="kv">
+<div><span class="v">12,116</span><span class="k">ASan corpus</span></div>
+<div><span class="v">12,760</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">12,103</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">14,799</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">1,302,629</span><span class="k">exec floor</span></div>
+<div><span class="v">928</span><span class="k">rate floor /s</span></div>
+<div><span class="v">50</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">36</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">9,729</span><span class="k">lines covered</span></div>
+<div><span class="v">1.77%</span><span class="k">of the lines it links</span></div>
+</div>
+<div class="nb">Archived inputs held aside from an earlier corpus cap: ASan 0, UBSan 44,505. These were moved, not deleted.</div>
+</div>
+<div class="tgt"><h3 id="t-json_parser_fuzzer">json_parser_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Arbitrary JSON text. <b>Reaches:</b> the JSON lexer and parser.</p>
+<div class="kv">
+<div><span class="v">39,853</span><span class="k">ASan corpus</span></div>
+<div><span class="v">34,201</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">63,566,267</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">44,653,412</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">63,566,267</span><span class="k">exec floor</span></div>
+<div><span class="v">71725</span><span class="k">rate floor /s</span></div>
+<div><span class="v">3</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">1</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">4,215</span><span class="k">lines covered</span></div>
+<div><span class="v">0.77%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-jsonb_fuzzer">jsonb_fuzzer</h3>
+<p class="feeds"><b>Input:</b> JSON text and jsonb binary forms. <b>Reaches:</b> jsonb parsing, its binary representation, and jsonb operators.</p>
+<div class="kv">
+<div><span class="v">76,541</span><span class="k">ASan corpus</span></div>
+<div><span class="v">87,363</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">12,914,998</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">25,319,880</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">39,155,866</span><span class="k">exec floor</span></div>
+<div><span class="v">23668</span><span class="k">rate floor /s</span></div>
+<div><span class="v">9</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">2</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">6,393</span><span class="k">lines covered</span></div>
+<div><span class="v">1.16%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-jsonpath_fuzzer">jsonpath_fuzzer</h3>
+<p class="feeds"><b>Input:</b> jsonpath expressions. <b>Reaches:</b> the SQL/JSON path parser and executor.</p>
+<div class="kv">
+<div><span class="v">47,178</span><span class="k">ASan corpus</span></div>
+<div><span class="v">129,811</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">1,255,850</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">18,703,280</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">13,942,047</span><span class="k">exec floor</span></div>
+<div><span class="v">36722</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">116</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">12,673</span><span class="k">lines covered</span></div>
+<div><span class="v">2.30%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-network_fuzzer">network_fuzzer</h3>
+<p class="feeds"><b>Input:</b> inet, cidr and macaddr literals. <b>Reaches:</b> the network address types and their operators.</p>
+<div class="kv">
+<div><span class="v">5,543</span><span class="k">ASan corpus</span></div>
+<div><span class="v">3,884</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">67,796,222</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">61,284,815</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">67,796,222</span><span class="k">exec floor</span></div>
+<div><span class="v">37644</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">4,984</span><span class="k">lines covered</span></div>
+<div><span class="v">0.90%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-numeric_fuzzer">numeric_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Arbitrary-precision numeric literals and operations. <b>Reaches:</b> the NUMERIC type: parsing, arithmetic, rounding and formatting.</p>
+<div class="kv">
+<div><span class="v">13,367</span><span class="k">ASan corpus</span></div>
+<div><span class="v">9,635</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">11,190,385</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">5,586,454</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">11,190,385</span><span class="k">exec floor</span></div>
+<div><span class="v">6213</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">6,961</span><span class="k">lines covered</span></div>
+<div><span class="v">1.26%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-protocol_fuzzer">protocol_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Raw frontend/backend protocol message streams. <b>Reaches:</b> the wire protocol state machine inside a real running backend.</p>
+<div class="kv">
+<div><span class="v">108,076</span><span class="k">ASan corpus</span></div>
+<div><span class="v">25,156</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">15,646</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">286,394</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">68,236,012</span><span class="k">exec floor</span></div>
+<div><span class="v">12388</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">26</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">58,258</span><span class="k">lines covered</span></div>
+<div><span class="v">10.52%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-raw_parser_fuzzer">raw_parser_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Arbitrary SQL text. <b>Reaches:</b> the SQL grammar - lexer and bison parser - stopping before planning.</p>
+<div class="kv">
+<div><span class="v">185,711</span><span class="k">ASan corpus</span></div>
+<div><span class="v">188,209</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">7,748,835</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">9,979,571</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">118,061,256</span><span class="k">exec floor</span></div>
+<div><span class="v">65553</span><span class="k">rate floor /s</span></div>
+<div><span class="v">2</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">1</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">14,794</span><span class="k">lines covered</span></div>
+<div><span class="v">2.69%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-regex_fuzzer">regex_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Regular expressions and subject strings. <b>Reaches:</b> the regex engine behind ~, SIMILAR TO and substring().</p>
+<div class="kv">
+<div><span class="v">7,325</span><span class="k">ASan corpus</span></div>
+<div><span class="v">6,201</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">30,984</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">5,278</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">1,387,937</span><span class="k">exec floor</span></div>
+<div><span class="v">57</span><span class="k">rate floor /s</span></div>
+<div><span class="v">2</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">3</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">39</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">10,055</span><span class="k">lines covered</span></div>
+<div><span class="v">1.83%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-scalar_types_fuzzer">scalar_types_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Text literals for the scalar types. <b>Reaches:</b> input/output functions for the simple scalar types.</p>
+<div class="kv">
+<div><span class="v">15,772</span><span class="k">ASan corpus</span></div>
+<div><span class="v">12,837</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">73,530,452</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">42,599,289</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">77,186,255</span><span class="k">exec floor</span></div>
+<div><span class="v">40828</span><span class="k">rate floor /s</span></div>
+<div><span class="v">5,713</span><span class="k">lines covered</span></div>
+<div><span class="v">1.04%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-simple_query_fuzzer">simple_query_fuzzer</h3>
+<p class="feeds"><b>Input:</b> SQL executed end to end. <b>Reaches:</b> parse, plan and execute inside a real backend - the deepest path.</p>
+<div class="kv">
+<div><span class="v">18,385</span><span class="k">ASan corpus</span></div>
+<div><span class="v">24,949</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">18,386</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">24,950</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">703,145</span><span class="k">exec floor</span></div>
+<div><span class="v">35</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">2</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">1</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">226,958</span><span class="k">lines covered</span></div>
+<div><span class="v">40.83%</span><span class="k">of the lines it links</span></div>
+</div>
+<div class="nb">Archived inputs held aside from an earlier corpus cap: ASan 0, UBSan 4,506. These were moved, not deleted.</div>
+</div>
+<div class="tgt"><h3 id="t-spi_query_fuzzer">spi_query_fuzzer</h3>
+<p class="feeds"><b>Input:</b> SQL run through the server-programming interface. <b>Reaches:</b> SPI, the interface extensions and PL languages use to run queries.</p>
+<div class="kv">
+<div><span class="v">15,826</span><span class="k">ASan corpus</span></div>
+<div><span class="v">23,692</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">33,554</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">23,693</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">3,367,118</span><span class="k">exec floor</span></div>
+<div><span class="v">40</span><span class="k">rate floor /s</span></div>
+<div><span class="v">5</span><span class="k">triaged findings</span></div>
+<div><span class="v">4</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">30</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">4</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">138,644</span><span class="k">lines covered</span></div>
+<div><span class="v">25.01%</span><span class="k">of the lines it links</span></div>
+</div>
+<div class="nb">Archived inputs held aside from an earlier corpus cap: ASan 22,455, UBSan 18,649. These were moved, not deleted.</div>
+</div>
+<div class="tgt"><h3 id="t-tsearch_fuzzer">tsearch_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Documents and text-search queries. <b>Reaches:</b> full-text search: parsing, dictionaries, ranking.</p>
+<div class="kv">
+<div><span class="v">115,282</span><span class="k">ASan corpus</span></div>
+<div><span class="v">126,168</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">17,591,752</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">19,675,956</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">112,760,617</span><span class="k">exec floor</span></div>
+<div><span class="v">62610</span><span class="k">rate floor /s</span></div>
+<div><span class="v">3</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">6,003</span><span class="k">lines covered</span></div>
+<div><span class="v">1.09%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+<div class="tgt"><h3 id="t-xlogreader_fuzzer">xlogreader_fuzzer</h3>
+<p class="feeds"><b>Input:</b> Write-ahead-log record bytes. <b>Reaches:</b> the WAL reader used by recovery and replication.</p>
+<div class="kv">
+<div><span class="v">680</span><span class="k">ASan corpus</span></div>
+<div><span class="v">512</span><span class="k">UBSan corpus</span></div>
+<div><span class="v">60,539,726</span><span class="k">ASan execs (slice)</span></div>
+<div><span class="v">199,390</span><span class="k">UBSan execs (slice)</span></div>
+<div><span class="v">86,845,881</span><span class="k">exec floor</span></div>
+<div><span class="v">45530</span><span class="k">rate floor /s</span></div>
+<div><span class="v">1</span><span class="k">triaged findings</span></div>
+<div><span class="v">462</span><span class="k">crashes (raw)</span></div>
+<div><span class="v">2</span><span class="k">OOMs (raw)</span></div>
+<div><span class="v">1</span><span class="k">timeout (raw)</span></div>
+<div><span class="v">3,812</span><span class="k">lines covered</span></div>
+<div><span class="v">0.69%</span><span class="k">of the lines it links</span></div>
+</div>
+</div>
+</section>
+<section id="coverage"><h2>Coverage</h2>
+<div class="eli5"><p><b>Coverage</b> is the share of the program's lines that the corpus actually executes. It answers a question the corpus size cannot: are these inputs reaching the code we care about, or piling up in one corner?</p><p>It is measured after the run by replaying the finished corpus against a build compiled to record which lines execute. Each target is measured on its own, one at a time.</p><p><b>Compare the &ldquo;lines covered&rdquo; column, not the percentage.</b> Every target links a different set of source files, so each has its own denominator: most sit near 550,000 lines of server code, but a target linking only the client library has a base of about 16,000. A percentage tracks one target over time; across targets it compares two different questions and will rank them wrongly.</p></div>
+<h3>All 23 together</h3>
+<p>Per-target numbers cannot be added up: every target executes the server's startup, its allocator, its error paths, so summing would count those lines twenty-three times. This is the <b>union</b>, computed by merging the raw profile data and counting each line once no matter how many targets reached it.</p>
+<div class="figures">
+<div class="fig"><span class="v">43.88%</span><span class="k">of all lines</span></div>
+<div class="fig"><span class="v">49.1%</span><span class="k">of functions</span></div>
+<div class="fig"><span class="v">29.8%</span><span class="k">of branches</span></div>
+<div class="fig"><span class="v">772</span><span class="k">of 1451 files entered</span></div>
+<div class="fig"><span class="v">49.5%</span><span class="k">of lines in those files</span></div>
+</div>
+<p><b>The whole is considerably more than its largest part.</b> The single deepest target reaches about 35% on its own; all twenty-three together reach 43.9%. The other twenty-two therefore add roughly 66,677 lines the deepest one never touches, which is the case for keeping the narrow single-purpose harnesses rather than only the broad ones.</p>
+<div class="nb">Functions reached (49%) sit well above branches taken (30%). That gap is the shape of the remaining work: the campaign gets <i>into</i> about half the functions but takes only about a third of the decisions inside them. What is left is mostly error handling and edge conditions, not unexplored subsystems.</div>
+<p>Coverage is measured for <b>all 23 targets</b>, one at a time. Each measurement replays that target's whole corpus against a build compiled to record which lines execute.</p>
+<div class="wrap"><table class="cells"><tr><th>Target</th><th>Lines covered</th><th>Lines it links</th><th>% of those</th><th>Functions</th><th>Branches</th></tr>
+<tr><td class="t">simple_query</td><td>226,958</td><td>555,866</td><td>40.83%</td><td>8,917</td><td>89,844</td></tr>
+<tr><td class="t">spi_query</td><td>138,644</td><td>554,290</td><td>25.01%</td><td>5,986</td><td>55,798</td></tr>
+<tr><td class="t">extension_funcs</td><td>119,686</td><td>554,447</td><td>21.59%</td><td>5,479</td><td>50,222</td></tr>
+<tr><td class="t">protocol</td><td>58,258</td><td>553,810</td><td>10.52%</td><td>3,403</td><td>25,884</td></tr>
+<tr><td class="t">backend_types</td><td>38,718</td><td>552,400</td><td>7.01%</td><td>2,173</td><td>16,831</td></tr>
+<tr><td class="t">conninfo</td><td>968</td><td>15,890</td><td>6.09%</td><td>43</td><td>420</td></tr>
+<tr><td class="t">raw_parser</td><td>14,794</td><td>550,875</td><td>2.69%</td><td>455</td><td>6,098</td></tr>
+<tr><td class="t">jsonpath</td><td>12,673</td><td>550,946</td><td>2.30%</td><td>654</td><td>5,957</td></tr>
+<tr><td class="t">regex</td><td>10,055</td><td>550,917</td><td>1.83%</td><td>504</td><td>5,241</td></tr>
+<tr><td class="t">hba_file</td><td>9,729</td><td>550,895</td><td>1.77%</td><td>519</td><td>4,946</td></tr>
+<tr><td class="t">binary_recv</td><td>9,183</td><td>550,849</td><td>1.67%</td><td>592</td><td>3,788</td></tr>
+<tr><td class="t">datetime</td><td>7,034</td><td>550,857</td><td>1.28%</td><td>422</td><td>3,067</td></tr>
+<tr><td class="t">numeric</td><td>6,961</td><td>550,869</td><td>1.26%</td><td>400</td><td>2,802</td></tr>
+<tr><td class="t">formatting</td><td>6,876</td><td>550,923</td><td>1.25%</td><td>430</td><td>3,315</td></tr>
+<tr><td class="t">jsonb</td><td>6,393</td><td>550,862</td><td>1.16%</td><td>447</td><td>2,678</td></tr>
+<tr><td class="t">tsearch</td><td>6,003</td><td>550,867</td><td>1.09%</td><td>399</td><td>2,409</td></tr>
+<tr><td class="t">scalar_types</td><td>5,713</td><td>550,902</td><td>1.04%</td><td>403</td><td>2,384</td></tr>
+<tr><td class="t">geo</td><td>5,059</td><td>550,865</td><td>0.92%</td><td>398</td><td>1,926</td></tr>
+<tr><td class="t">network</td><td>4,984</td><td>550,851</td><td>0.90%</td><td>362</td><td>2,049</td></tr>
+<tr><td class="t">config_file</td><td>4,854</td><td>550,886</td><td>0.88%</td><td>350</td><td>1,880</td></tr>
+<tr><td class="t">encoding</td><td>4,527</td><td>550,863</td><td>0.82%</td><td>353</td><td>1,791</td></tr>
+<tr><td class="t">json_parser</td><td>4,215</td><td>550,953</td><td>0.77%</td><td>322</td><td>1,723</td></tr>
+<tr><td class="t">xlogreader</td><td>3,812</td><td>550,896</td><td>0.69%</td><td>295</td><td>1,432</td></tr>
+</table></div>
+<h3>Where the coverage lands &mdash; simple_query_fuzzer</h3>
+<p>Broken down by component, so it is visible whether the vendor-patched code and the loaded extensions are being reached at all, rather than only core PostgreSQL.</p>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Lines covered</th><th>Lines it links</th><th>% of those</th></tr>
+<tr><td class="t">core</td><td>139,687</td><td>441,540</td><td>31.64%</td></tr>
+<tr><td class="t">core files the patch touches</td><td>53,087</td><td>114,401</td><td>46.40%</td></tr>
+<tr><td class="t">ext:pg_stat_statements</td><td>610</td><td>1,408</td><td>43.32%</td></tr>
+<tr><td class="t">plugin:pgaudit</td><td>390</td><td>1,154</td><td>33.80%</td></tr>
+<tr><td class="t">plugin:pg_stat_kcache</td><td>343</td><td>641</td><td>53.51%</td></tr>
+<tr><td class="t">plugin:pgauditlogtofile</td><td>231</td><td>648</td><td>35.65%</td></tr>
+<tr><td class="t">plugin:pg_show_plans</td><td>192</td><td>361</td><td>53.19%</td></tr>
+<tr><td class="t">plugin:pg_cron</td><td>120</td><td>2,386</td><td>5.03%</td></tr>
+<tr><td class="t">plugin:orafce</td><td>109</td><td>10,629</td><td>1.03%</td></tr>
+<tr><td class="t">ext:pg_wait_sampling</td><td>22</td><td>817</td><td>2.69%</td></tr>
+<tr><td class="t">ext:fulleq</td><td>12</td><td>35</td><td>34.29%</td></tr>
+<tr><td class="t">ext:dblink</td><td>0</td><td>1,694</td><td>0.00%</td></tr>
+<tr><td class="t">ext:fasttrun</td><td>0</td><td>46</td><td>0.00%</td></tr>
+<tr><td class="t">ext:mchar</td><td>0</td><td>1,374</td><td>0.00%</td></tr>
+<tr><td class="t">plugin:credcheck</td><td>0</td><td>1,254</td><td>0.00%</td></tr>
+<tr><td class="t">plugin:mysql_fdw</td><td>0</td><td>4,383</td><td>0.00%</td></tr>
+<tr><td class="t">plugin:pg_background</td><td>0</td><td>600</td><td>0.00%</td></tr>
+<tr><td class="t">plugin:pgsql-http</td><td>0</td><td>842</td><td>0.00%</td></tr>
+<tr><td class="t">plugin:tds_fdw</td><td>0</td><td>3,379</td><td>0.00%</td></tr>
+</table></div>
+<div class="nb">&ldquo;core files the patch touches&rdquo; is every line of the 265 files the patch series modifies, not the patch itself. The patch adds 26,073 lines into a 114,450-line universe &mdash; 22.8% &mdash; so the other three quarters is stock PostgreSQL that happens to share a file with a hunk, and the patch&rsquo;s own lines could be wholly covered or wholly missed without moving this figure much. It also sits above plain core partly because the patch touches tcop, the executor and the parser, which a query fuzzer exercises heavily whether or not they were patched.</div>
+</section>
+<section id="findings"><h2>What it turned up</h2>
+<div class="eli5"><p>Two different numbers get called &ldquo;findings&rdquo;, and confusing them overstates the result by more than tenfold.</p><p>An <b>artifact</b> is one saved input that made the target crash, run out of memory, or hang. The fuzzer writes one file <i>every time</i> it happens, so a single underlying defect hit repeatedly produces hundreds of them.</p><p>A <b>finding</b> is a distinct defect after triage &mdash; after those artifacts have been reduced, grouped by signature, and confirmed. That is the number that means something.</p></div>
+<div class="figures">
+<div class="fig"><span class="v">2,134</span><span class="k">raw artifacts</span></div>
+<div class="fig"><span class="v">25</span><span class="k">distinct findings, triaged</span></div>
+</div>
+<p>By area of the system:</p>
+<div class="wrap"><table class="cells"><tr><th>Area</th><th>Distinct findings</th></tr>
+<tr><td class="t">PostgreSQL core</td><td>7</td></tr>
+<tr><td class="t">harness &amp; tooling</td><td>7</td></tr>
+<tr><td class="t">storage engine</td><td>7</td></tr>
+<tr><td class="t">third-party extensions</td><td>4</td></tr>
+</table></div>
+<h3>Which fuzzer found them</h3>
+<p>A finding is attributed to a target when the write-up says so outright, or when it names exactly one. A write-up naming several is left unattributed on purpose: those are systemic &mdash; a deadline that never fires, a budget eaten by replay &mdash; and hit many targets at once. Pinning one on whichever fuzzer is mentioned first would invent a precision the evidence does not have.</p>
+<div class="wrap"><table class="cells"><tr><th>Target</th><th>Distinct findings</th></tr>
+<tr><td class="t">spi_query</td><td>5</td></tr>
+<tr><td class="t">config_file</td><td>1</td></tr>
+<tr><td class="t">datetime</td><td>1</td></tr>
+<tr><td class="t">encoding</td><td>1</td></tr>
+<tr><td class="t">extension_funcs</td><td>1</td></tr>
+<tr><td class="t">protocol</td><td>1</td></tr>
+<tr><td class="t">simple_query</td><td>1</td></tr>
+<tr><td class="t">xlogreader</td><td>1</td></tr>
+<tr><td class="dim">systemic &mdash; several targets at once</td><td>7</td></tr>
+<tr><td class="dim">found by a different harness</td><td>5</td></tr>
+<tr><td class="dim">not attributable from the write-up</td><td>1</td></tr>
+</table></div>
+<div class="nb">Counts only, deliberately. Which component carries which defect, and whether it is reported upstream, is the maintainers&rsquo; call to make and not this report&rsquo;s to pre-empt. The per-target table above shows raw artifact counts so the shape of the run is visible; the artifacts and reproducers are not published here.</div>
+<p>The per-target artifact counts are worth reading as a <i>map of where the run spent its luck</i>, not as a scoreboard. Two targets account for most of the raw total, and in both cases that is one signature hit over and over rather than many separate problems.</p>
+</section>
+<section id="components"><h2>Every component, and its hash</h2>
+<div class="eli5"><p>The fingerprint is eight characters. It answers "are these two runs the same" and nothing else &mdash; when it changes it does not say what changed, and two years from now it is not a build recipe. This is the expansion: every input, layer by layer, with the hash that identifies it.</p><p>A dot marks something recorded but deliberately <i>not</i> hashed into the fingerprint &mdash; the driver script, the build recipe. They shape the build without defining the experiment, and marking them keeps the difference visible instead of implied.</p></div>
+<div class="figures">
+<div class="fig"><span class="v">134</span><span class="k">components</span></div>
+<div class="fig"><span class="v">6</span><span class="k">layers</span></div>
+<div class="fig"><span class="v">0</span><span class="k">unreadable</span></div>
+</div>
+<h3>substrate</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">oss-fuzz</td><td>git commit</td><td><code>0f4d4d3004beb4946db46905163b1638777395a9</code></td><td style="text-align:left">build driver, base image definitions</td></tr>
+<tr><td class="t">gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04</td><td>docker image</td><td><code>sha256:feb9e59248ce2de645388db04986b84d668692e7723eca6104f935494866d679</code></td><td style="text-align:left">libFuzzer is linked statically from here</td></tr>
+<tr><td class="t">llvm-project (clang + libFuzzer) <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>git commit</td><td><code>063d3766486a820c708e888d737b004d11543410</code></td><td style="text-align:left">implied by the oss-fuzz commit, not hashed separately</td></tr>
+</table></div>
+<h3>driver</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">pg-fuzz</td><td>git commit</td><td><code>df5f23d</code></td><td style="text-align:left">this repository</td></tr>
+<tr><td class="t">pgfuzz <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>77b53555ae1c59b8</code></td><td style="text-align:left">workspace driver; shapes the build, does not define the experiment</td></tr>
+</table></div>
+<h3>harness</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">backend_types_fuzzer.c</td><td>sha256</td><td><code>74da5f7a76960a60</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">binary_recv_fuzzer.c</td><td>sha256</td><td><code>977fc9baca953582</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">config_file_fuzzer.c</td><td>sha256</td><td><code>090b305efd452736</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">conninfo_fuzzer.c</td><td>sha256</td><td><code>922f0d2e8c1a44d3</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">datetime_fuzzer.c</td><td>sha256</td><td><code>1f534e387389f187</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">dbfuzz.c</td><td>sha256</td><td><code>cf38c81ea7cb6a0e</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">encoding_fuzzer.c</td><td>sha256</td><td><code>d46b35b8cbbc5b2a</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">extension_funcs_fuzzer.c</td><td>sha256</td><td><code>6d7c34e322da0ac0</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">formatting_fuzzer.c</td><td>sha256</td><td><code>fa419efd576d6fb1</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_canary.h</td><td>sha256</td><td><code>611b84afa9c91763</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_deadline.h</td><td>sha256</td><td><code>4fa3beae013411e9</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_lineage.h</td><td>sha256</td><td><code>ef0fc2bf2e8f349d</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_logspam.h</td><td>sha256</td><td><code>9a8e51cce9b0f5da</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_lsan.h</td><td>sha256</td><td><code>3c799e26acff1b80</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_orphan.c</td><td>sha256</td><td><code>86858d1e67e2f3dc</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_probe.h</td><td>sha256</td><td><code>3a9e1b83ecc5a6f0</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_timeout.h</td><td>sha256</td><td><code>c2426de5b68ad80e</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzz_util.h</td><td>sha256</td><td><code>d5e451878667a0d5</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">fuzzer_initialize.c</td><td>sha256</td><td><code>bb4943e188deeca2</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">geo_fuzzer.c</td><td>sha256</td><td><code>b23761cb3ffd562c</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">hba_file_fuzzer.c</td><td>sha256</td><td><code>84899080f504c661</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">json_parser_fuzzer.c</td><td>sha256</td><td><code>7dd48c46f7a985ae</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">jsonb_fuzzer.c</td><td>sha256</td><td><code>99d3ae8cd5db54a8</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">jsonpath_fuzzer.c</td><td>sha256</td><td><code>10aa276f55f1e777</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">network_fuzzer.c</td><td>sha256</td><td><code>add6e233d007cbbb</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">numeric_fuzzer.c</td><td>sha256</td><td><code>dd2324532d8f861d</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">protocol_fuzzer.c</td><td>sha256</td><td><code>5616aea3d65c5217</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">raw_parser_fuzzer.c</td><td>sha256</td><td><code>32c8e9bdc95b4ee6</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">regex_fuzzer.c</td><td>sha256</td><td><code>0bd9ce5ff76afed9</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">scalar_types_fuzzer.c</td><td>sha256</td><td><code>d5f7297c2cb75623</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">simple_query_fuzzer.c</td><td>sha256</td><td><code>eba79ea2fedc6128</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">spi_query_fuzzer.c</td><td>sha256</td><td><code>784173fe68e9a661</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">tsearch_fuzzer.c</td><td>sha256</td><td><code>2c1f93609c76c7ef</code></td><td style="text-align:left">fuzzer source</td></tr>
+<tr><td class="t">xlogreader_fuzzer.c</td><td>sha256</td><td><code>c03f2c2d90765d34</code></td><td style="text-align:left">fuzzer source</td></tr>
+</table></div>
+<h3>harness support</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">build.sh <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>64e2c348e2de114a</code></td><td style="text-align:left">build recipe / patch</td></tr>
+<tr><td class="t">Dockerfile <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>ddbcb74cc6944082</code></td><td style="text-align:left">build recipe / patch</td></tr>
+<tr><td class="t">plugins.tsv <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>85b26f8eb3dbf368</code></td><td style="text-align:left">build recipe / patch</td></tr>
+<tr><td class="t">add_fuzzers.diff <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>339aa0bd7f5d7174</code></td><td style="text-align:left">build recipe / patch</td></tr>
+<tr><td class="t">main.diff <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>541340fcf81e66f4</code></td><td style="text-align:left">build recipe / patch</td></tr>
+<tr><td class="t">guc_file_nul.diff <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>sha256</td><td><code>bffde9f8b08670d5</code></td><td style="text-align:left">build recipe / patch</td></tr>
+</table></div>
+<h3>pg17-ext-all-add</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">PostgreSQL REL_17_10</td><td>git commit</td><td><code>25c49f3a4a742ba283f5cc43cc7f1d361552e917</code></td><td style="text-align:left">address, uninstrumented gcc, --enable-cassert</td></tr>
+<tr><td class="t">distro-REL_17_10.patch</td><td>sha256</td><td><code>d1b3bead2f48f537</code></td><td style="text-align:left">vendor patch</td></tr>
+<tr><td class="t">0003-stack-depth-asan-uar-REL_17_10.patch</td><td>sha256</td><td><code>35d60fc5b0e57191</code></td><td style="text-align:left">vendor patch</td></tr>
+<tr><td class="t">credcheck</td><td>git commit</td><td><code>35c6a79</code></td><td style="text-align:left">PATCHED LOCAL TREE -- not the released plugin</td></tr>
+<tr><td class="t">orafce</td><td>git commit</td><td><code>57223d3</code></td><td style="text-align:left">PATCHED LOCAL TREE -- not the released plugin</td></tr>
+<tr><td class="t">pg_background</td><td>git commit</td><td><code>5fc36a3</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_cron</td><td>git commit</td><td><code>465b38c</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_profile</td><td>git commit</td><td><code>306f0fe</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_repack</td><td>git commit</td><td><code>6902ab3</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_show_plans</td><td>git commit</td><td><code>da2dc09</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_stat_kcache</td><td>git commit</td><td><code>2f1a1f5</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgaudit</td><td>git commit</td><td><code>538f89a</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgauditlogtofile</td><td>git commit</td><td><code>f6ed3f4</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgsql-http</td><td>git commit</td><td><code>fbea6fe</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">tds_fdw</td><td>git commit</td><td><code>5fd7d42</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">mchar <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">fulleq <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">fasttrun <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">pg_wait_sampling <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">pg_stat_statements <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">dblink <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">backend_types_fuzzer</td><td>sha256</td><td><code>0dfc8cabdc0a170f</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">binary_recv_fuzzer</td><td>sha256</td><td><code>63025ecaa3fce36c</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">config_file_fuzzer</td><td>sha256</td><td><code>6beff728a1ba3ced</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">conninfo_fuzzer</td><td>sha256</td><td><code>0aa0eb601ddcbe5a</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">datetime_fuzzer</td><td>sha256</td><td><code>01cfbb4b1607b909</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">encoding_fuzzer</td><td>sha256</td><td><code>5e10762081213cf2</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">extension_funcs_fuzzer</td><td>sha256</td><td><code>3cd123ddb7bb035b</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">formatting_fuzzer</td><td>sha256</td><td><code>a90c49c0a857a785</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">geo_fuzzer</td><td>sha256</td><td><code>74a2c1fcb0e22f8e</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">hba_file_fuzzer</td><td>sha256</td><td><code>17782ead800a6f85</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">json_parser_fuzzer</td><td>sha256</td><td><code>c96926e2fa067a94</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">jsonb_fuzzer</td><td>sha256</td><td><code>66855ca50a610fa3</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">jsonpath_fuzzer</td><td>sha256</td><td><code>b89b52b8b564a94a</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">network_fuzzer</td><td>sha256</td><td><code>02f1774b29a1a67c</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">numeric_fuzzer</td><td>sha256</td><td><code>8342beb20c0ad09d</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">protocol_fuzzer</td><td>sha256</td><td><code>07ebebe4529f74c9</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">raw_parser_fuzzer</td><td>sha256</td><td><code>f3a55b369c9e6b33</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">regex_fuzzer</td><td>sha256</td><td><code>c1c455dd17bc756a</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">scalar_types_fuzzer</td><td>sha256</td><td><code>505980d856e94625</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">simple_query_fuzzer</td><td>sha256</td><td><code>58578fc59173dfb8</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">spi_query_fuzzer</td><td>sha256</td><td><code>c5770d027c4558bf</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">tsearch_fuzzer</td><td>sha256</td><td><code>09b0389081458bc6</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">xlogreader_fuzzer</td><td>sha256</td><td><code>cc934bab31190695</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+</table></div>
+<h3>pg17-ext-all-und</h3>
+<div class="wrap"><table class="cells"><tr><th>Component</th><th>Kind</th><th>Hash</th><th>Note</th></tr>
+<tr><td class="t">PostgreSQL REL_17_10</td><td>git commit</td><td><code>25c49f3a4a742ba283f5cc43cc7f1d361552e917</code></td><td style="text-align:left">undefined, uninstrumented gcc, --enable-cassert</td></tr>
+<tr><td class="t">distro-REL_17_10.patch</td><td>sha256</td><td><code>d1b3bead2f48f537</code></td><td style="text-align:left">vendor patch</td></tr>
+<tr><td class="t">0003-stack-depth-asan-uar-REL_17_10.patch</td><td>sha256</td><td><code>35d60fc5b0e57191</code></td><td style="text-align:left">vendor patch</td></tr>
+<tr><td class="t">credcheck</td><td>git commit</td><td><code>35c6a79</code></td><td style="text-align:left">PATCHED LOCAL TREE -- not the released plugin</td></tr>
+<tr><td class="t">mysql_fdw</td><td>git commit</td><td><code>4aca57f</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">orafce</td><td>git commit</td><td><code>57223d3</code></td><td style="text-align:left">PATCHED LOCAL TREE -- not the released plugin</td></tr>
+<tr><td class="t">pg_background</td><td>git commit</td><td><code>5fc36a3</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_cron</td><td>git commit</td><td><code>465b38c</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_profile</td><td>git commit</td><td><code>306f0fe</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_repack</td><td>git commit</td><td><code>6902ab3</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_show_plans</td><td>git commit</td><td><code>da2dc09</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pg_stat_kcache</td><td>git commit</td><td><code>2f1a1f5</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgaudit</td><td>git commit</td><td><code>538f89a</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgauditlogtofile</td><td>git commit</td><td><code>f6ed3f4</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">pgsql-http</td><td>git commit</td><td><code>fbea6fe</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">tds_fdw</td><td>git commit</td><td><code>5fd7d42</code></td><td style="text-align:left">registry pin</td></tr>
+<tr><td class="t">mchar <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">fulleq <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">fasttrun <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">pg_wait_sampling <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">pg_stat_statements <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">dblink <span class="dim" title="not hashed into the fingerprint">&middot;</span></td><td>n/a</td><td><code>shipped by patch</code></td><td style="text-align:left">created from the vendor patch / contrib; no independent hash</td></tr>
+<tr><td class="t">backend_types_fuzzer</td><td>sha256</td><td><code>c9bd9b4e970cbbc4</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">binary_recv_fuzzer</td><td>sha256</td><td><code>bb7175afcdfa306d</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">config_file_fuzzer</td><td>sha256</td><td><code>3d67d7c4bd9edf22</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">conninfo_fuzzer</td><td>sha256</td><td><code>a46517122f87a924</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">datetime_fuzzer</td><td>sha256</td><td><code>b8953407920b66ca</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">encoding_fuzzer</td><td>sha256</td><td><code>45494faa17d49336</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">extension_funcs_fuzzer</td><td>sha256</td><td><code>ae3a578c98e99e01</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">formatting_fuzzer</td><td>sha256</td><td><code>815dd012dac20330</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">geo_fuzzer</td><td>sha256</td><td><code>0c4cd02bd8050089</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">hba_file_fuzzer</td><td>sha256</td><td><code>972aab49a85dda85</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">json_parser_fuzzer</td><td>sha256</td><td><code>58f213d44d296ff7</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">jsonb_fuzzer</td><td>sha256</td><td><code>79cd253313fd4049</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">jsonpath_fuzzer</td><td>sha256</td><td><code>f0a4dc49943d5d4d</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">network_fuzzer</td><td>sha256</td><td><code>d5e2210d2858adb1</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">numeric_fuzzer</td><td>sha256</td><td><code>eb0b12a47b151e8a</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">protocol_fuzzer</td><td>sha256</td><td><code>ef30bd33f0cb22be</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">raw_parser_fuzzer</td><td>sha256</td><td><code>86ef18f37653a873</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">regex_fuzzer</td><td>sha256</td><td><code>04b0482405b0025d</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">scalar_types_fuzzer</td><td>sha256</td><td><code>1d2720d68e34d384</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">simple_query_fuzzer</td><td>sha256</td><td><code>25bbabf0532ecba3</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">spi_query_fuzzer</td><td>sha256</td><td><code>152a38dacb293e60</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">tsearch_fuzzer</td><td>sha256</td><td><code>6ad61c60fde58ec3</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+<tr><td class="t">xlogreader_fuzzer</td><td>sha256</td><td><code>c5ce2485a6a9b835</code></td><td style="text-align:left">built target; libFuzzer linked in</td></tr>
+</table></div>
+</section>
+<section id="masked"><h2>What the gates did not fail on</h2>
+<div class="eli5"><p>A ratchet earns its keep by not crying wolf, and every rule that stops it crying wolf also hides something. A report that shows only what passed inherits that blindness, so this section lists what was let through and why.</p><p>Three ways it happens. An <b>acknowledgement</b> suppresses a target outright &mdash; a decision made deliberately in a commit, but one nobody revisits becomes a finding nobody looked at. The <b>tolerance</b> is "at least a tenth of the record", not "within a tenth of it", so a target can fall by eighty per cent and still pass. And a floor earned under a different configuration is <b>skipped as not comparable</b>, which is correct and still leaves that target unguarded.</p></div>
+<div class="figures">
+<div class="fig"><span class="v">0</span><span class="k">acknowledged</span></div>
+<div class="fig"><span class="v">158</span><span class="k">passing under half their floor</span></div>
+<div class="fig"><span class="v">5</span><span class="k">floors unenforced (regime)</span></div>
+</div>
+<p>No targets are currently acknowledged, so nothing is suppressed outright.</p>
+<h3>Passing, a long way below their own record</h3>
+<p>These clear the bar and sit under half of what they once managed. Nothing fails here, which is the point of showing it &mdash; the lowest rows are within a hair of the threshold.</p>
+<div class="wrap"><table class="cells"><tr><th>Target</th><th>Build</th><th>Observed</th><th>Floor</th><th>Fraction</th></tr>
+<tr><td class="t">binary_recv</td><td>und</td><td>303,191</td><td>2,899,981</td><td>0.10&times;</td></tr>
+<tr><td class="t">datetime</td><td>und</td><td>2,931,423</td><td>25,692,969</td><td>0.11&times;</td></tr>
+<tr><td class="t">xlogreader</td><td>und</td><td>515,173</td><td>4,100,885</td><td>0.13&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>add</td><td>443,190</td><td>3,338,871</td><td>0.13&times;</td></tr>
+<tr><td class="t">xlogreader</td><td>und</td><td>92,183</td><td>657,038</td><td>0.14&times;</td></tr>
+<tr><td class="t">hba_file</td><td>und</td><td>81,760</td><td>563,657</td><td>0.14&times;</td></tr>
+<tr><td class="t">spi_query</td><td>add</td><td>52,544</td><td>359,932</td><td>0.15&times;</td></tr>
+<tr><td class="t">extension_funcs</td><td>und</td><td>32,940</td><td>217,072</td><td>0.15&times;</td></tr>
+<tr><td class="t">datetime</td><td>add</td><td>5,665,934</td><td>36,747,093</td><td>0.15&times;</td></tr>
+<tr><td class="t">tsearch</td><td>add</td><td>17,591,752</td><td>112,760,617</td><td>0.16&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>und</td><td>296,474</td><td>1,863,827</td><td>0.16&times;</td></tr>
+<tr><td class="t">spi_query</td><td>add</td><td>64,816</td><td>399,222</td><td>0.16&times;</td></tr>
+<tr><td class="t">regex</td><td>und</td><td>37,444</td><td>228,778</td><td>0.16&times;</td></tr>
+<tr><td class="t">spi_query</td><td>add</td><td>60,048</td><td>364,002</td><td>0.17&times;</td></tr>
+<tr><td class="t">hba_file</td><td>und</td><td>104,652</td><td>609,638</td><td>0.17&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>add</td><td>505,182</td><td>2,678,992</td><td>0.19&times;</td></tr>
+<tr><td class="t">regex</td><td>add</td><td>25,944</td><td>131,370</td><td>0.20&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>und</td><td>268,028</td><td>1,314,176</td><td>0.20&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>und</td><td>1,172,711</td><td>5,655,867</td><td>0.21&times;</td></tr>
+<tr><td class="t">jsonpath</td><td>und</td><td>176,919</td><td>850,087</td><td>0.21&times;</td></tr>
+</table></div>
+<p class="dim">138 more not listed.</p>
+<h3>Floors not currently enforced</h3>
+<p>Earned under a different job count, so not comparable to what runs now. They will be re-established, and until then these targets have no floor guarding them.</p>
+<p class="dim">protocol, simple_query</p>
+</section>
+<section id="ratchet"><h2>The ratchet</h2>
+<div class="eli5"><p>A <b>ratchet</b> records the best each target has ever done and fails the run if it later does meaningfully worse. It exists because the dangerous failure in fuzzing is silent: a target that stops working still produces logs, still writes files, and still looks healthy. Only comparison against its own past catches it.</p><p>An <b>exec floor</b> is the number of inputs a target has run before. A <b>rate floor</b> is how fast it ran them. Rate matters separately &mdash; a target given twice the time can clear its exec floor while running at half speed, and the ratchet should notice.</p></div>
+<div class="figures">
+<div class="fig"><span class="v">782</span><span class="k">exec floors recorded</span></div>
+<div class="fig"><span class="v">34</span><span class="k">workspaces covered</span></div>
+<div class="fig"><span class="v">456</span><span class="k">rate floors</span></div>
+<div class="fig"><span class="v">0.1</span><span class="k">tolerance</span></div>
+</div>
+<p>Floors for the two campaign builds, as they stood when the run stopped:</p>
+<div class="wrap"><table class="cells"><tr><th>Target</th><th>ASan exec floor</th><th>ASan rate /s</th><th>UBSan exec floor</th><th>UBSan rate /s</th></tr>
+<tr><td class="t">backend_types</td><td>61,381,386</td><td>28549</td><td>71,330,035</td><td>31210</td></tr>
+<tr><td class="t">binary_recv</td><td>299,025</td><td>166</td><td>2,899,981</td><td>16860</td></tr>
+<tr><td class="t">config_file</td><td>12,263,741</td><td>6809</td><td>13,806,739</td><td>6509</td></tr>
+<tr><td class="t">conninfo</td><td>132,868,557</td><td>73775</td><td>131,523,215</td><td>73028</td></tr>
+<tr><td class="t">datetime</td><td>36,747,093</td><td>111527</td><td>25,692,969</td><td>67379</td></tr>
+<tr><td class="t">encoding</td><td>82,627,430</td><td>45879</td><td>50,637,156</td><td>28116</td></tr>
+<tr><td class="t">extension_funcs</td><td>230,880</td><td>240</td><td>125,025</td><td>301</td></tr>
+<tr><td class="t">formatting</td><td>43,785,464</td><td>24312</td><td>30,959,791</td><td>17190</td></tr>
+<tr><td class="t">geo</td><td>51,438,590</td><td>28561</td><td>43,622,144</td><td>24221</td></tr>
+<tr><td class="t">hba_file</td><td>1,302,629</td><td>928</td><td>3,985,424</td><td>23</td></tr>
+<tr><td class="t">json_parser</td><td>63,566,267</td><td>71725</td><td>44,653,412</td><td>24794</td></tr>
+<tr><td class="t">jsonb</td><td>39,155,866</td><td>23668</td><td>93,849,296</td><td>52110</td></tr>
+<tr><td class="t">jsonpath</td><td>13,942,047</td><td>36722</td><td>21,054,980</td><td>11691</td></tr>
+<tr><td class="t">network</td><td>67,796,222</td><td>37644</td><td>61,284,815</td><td>34028</td></tr>
+<tr><td class="t">numeric</td><td>11,190,385</td><td>6213</td><td>5,586,454</td><td>3102</td></tr>
+<tr><td class="t">protocol</td><td>68,236,012</td><td>12388</td><td>28,638,177</td><td>208</td></tr>
+<tr><td class="t">raw_parser</td><td>118,061,256</td><td>65553</td><td>121,644,315</td><td>67543</td></tr>
+<tr><td class="t">regex</td><td>1,387,937</td><td>57</td><td>753,337</td><td>430</td></tr>
+<tr><td class="t">scalar_types</td><td>77,186,255</td><td>40828</td><td>52,992,105</td><td>23653</td></tr>
+<tr><td class="t">simple_query</td><td>703,145</td><td>35</td><td>1,104,615</td><td>6</td></tr>
+<tr><td class="t">spi_query</td><td>3,367,118</td><td>40</td><td>1,209,092</td><td>54</td></tr>
+<tr><td class="t">tsearch</td><td>112,760,617</td><td>62610</td><td>23,376,342</td><td>11025</td></tr>
+<tr><td class="t">xlogreader</td><td>86,845,881</td><td>45530</td><td>11,053,569</td><td>95499</td></tr>
+</table></div>
+<div class="nb">Exec floors are cumulative across the campaign&rsquo;s history; the per-target &ldquo;execs&rdquo; figures in the table above are for the final slice only. They are different measurements and should not be compared directly.</div>
+</section>
+<section id="patches"><h2>Source changes</h2>
+<div class="eli5"><p>Four different kinds of source change are in play, and the difference matters. A <b>patch series</b> is code we were given and are testing. A <b>cherry-pick</b> is an upstream fix pulled back. A <b>patched extension</b> is a local change to third-party code so it survives being fuzzed. <b>Harness</b> code is ours &mdash; the fuzz targets themselves.</p><p>Only a patched extension could be mistaken for &ldquo;we found a bug in someone else's software&rdquo;, and at least one of them is not that: it is a compatibility change so the extension tolerates being driven far harder than it was designed for.</p></div>
+<h3>core patch</h3>
+<div class="wrap"><table class="cells"><tr><th>What</th><th>Where</th></tr>
+<tr><td class="t">distro-REL_17_10.patch</td><td>/home/dead/Projects/sources/distro-REL_17_10.patch</td></tr>
+<tr><td></td><td class="dim">applied to the PostgreSQL source before build</td></tr>
+</table></div>
+<h3>patched extension</h3>
+<div class="wrap"><table class="cells"><tr><th>What</th><th>Where</th></tr>
+<tr><td class="t">orafce</td><td>/home/dead/Projects/sources/orafce-lockguard</td></tr>
+<tr><td></td><td class="dim">57223d3 pgfuzz: do not self-deadlock on shmem_lockid</td></tr>
+<tr><td class="t">credcheck</td><td>/home/dead/Projects/sources/credcheck-nullguard</td></tr>
+<tr><td></td><td class="dim">35c6a79 pg-fuzz local patch: NULL guard and one-byte heap overflow in to_nlower</td></tr>
+</table></div>
+<h3>harness</h3>
+<div class="wrap"><table class="cells"><tr><th>What</th><th>Where</th></tr>
+<tr><td class="t">fuzz_deadline.h</td><td>project/fuzzer/fuzz_deadline.h</td></tr>
+<tr><td></td><td class="dim">0b8230b 2026-08-26 A per-input deadline that does not need PostgreSQL's timeout table</td></tr>
+<tr><td class="t">protocol_fuzzer.c</td><td>project/fuzzer/protocol_fuzzer.c</td></tr>
+<tr><td></td><td class="dim">f990590 2026-08-29 Canary names the leaking contexts; lineage records mutation provenance</td></tr>
+<tr><td class="t">simple_query_fuzzer.c</td><td>project/fuzzer/simple_query_fuzzer.c</td></tr>
+<tr><td></td><td class="dim">2652204 2026-08-31 Version-guard two APIs that differ across the branches we build</td></tr>
+<tr><td class="t">spi_query_fuzzer.c</td><td>project/fuzzer/spi_query_fuzzer.c</td></tr>
+<tr><td></td><td class="dim">f990590 2026-08-29 Canary names the leaking contexts; lineage records mutation provenance</td></tr>
+<tr><td class="t">fuzz_timeout.h</td><td>project/fuzzer/fuzz_timeout.h</td></tr>
+<tr><td></td><td class="dim">bf4b176 2026-08-16 D2: a statement deadline that actually fires</td></tr>
+</table></div>
+<div class="nb">The extension change guards against a lock the extension could take twice against itself under the harness&rsquo;s call pattern. It is a harness-compatibility fix, not a defect report against that project.</div>
+</section>
+<section id="limits"><h2>Limits &amp; open items</h2>
+<p>Stated plainly, because a report that only lists what worked is not much use:</p><ul>
+<li><b>Coverage is reproducible to within measurement noise.</b> Every target was measured twice &mdash; once one-at-a-time, once with all 23 running concurrently in isolated containers. Twenty of 23 agreed exactly; the other three differed by 3, 4 and 34 lines out of tens of thousands. Two repeats of the <i>same</i> serial method differ by a similar amount, so that is the noise floor of the measurement, not a defect in it.</li>
+<li><b>Coverage is a post-hoc snapshot.</b> It was measured after the run against the final corpus, not tracked continuously, so it shows where the corpus ended up rather than how it got there.</li>
+<li><b>The coverage build had drifted &mdash; now checked automatically.</b> It was built two days before the fuzzing builds and, because its configuration named the unpatched version of one extension, a clean rebuild still produced different software. Coverage from it would have sat beside corpus figures describing a different program. A check now compares the source commit, every shared extension&rsquo;s version, and the applied patches across all three builds, and refuses to let them diverge silently.</li>
+<li><b>Ten of the throughput floors were measured in the wrong unit.</b> A target runs several jobs at once. The execution counts were added together across those jobs, correctly, but so were their durations &mdash; and concurrent durations do not add. The resulting speed figure was per-job while the count beside it was the total, and comparing them implied up to 88 hours of work for a two-hour slice. Fixed, and the affected floors were discarded rather than kept: a floor nothing can fail is worse than no floor. The execution-count floors are unaffected.</li>
+<li><b>Per-target logs are per-slice.</b> Soak overwrites each target&rsquo;s log every slice, so the shipped logs hold the final slice, not the whole run. Cumulative history lives in the ratchet series, which is included.</li>
+<li><b>Two targets needed restarting during the run.</b> Both drive a real server process and can wedge it; a watchdog restarts them. The underlying cause is understood for one path and not fully for the other.</li>
+<li><b>An earlier corpus cap archived a large number of inputs</b> on a diagnosis that turned out to be wrong. They were archived rather than deleted and the counts are shown per target above.</li>
+</ul></section>
+<section id="bundle"><h2>The bundle</h2>
+<p>Shipped alongside this report:</p>
+<div class="wrap"><table class="cells"><tr><th>File</th><th>Contents</th></tr>
+<tr><td class="t">corpus-asan.tar.zst</td><td>every input kept by the ASan build, per target</td></tr>
+<tr><td class="t">corpus-ubsan.tar.zst</td><td>every input kept by the UBSan build, per target</td></tr>
+<tr><td class="t">fuzzing-logs.tar.gz</td><td>per-target fuzzer logs (final slice)</td></tr>
+<tr><td class="t">ratchet-baseline.json</td><td>all exec and rate floors</td></tr>
+<tr><td class="t">ratchet-series.jsonl</td><td>per-slice history for every target</td></tr>
+<tr><td class="t">coverage-series.jsonl</td><td>coverage totals per target</td></tr>
+<tr><td class="t">coverage-components.jsonl</td><td>coverage split by component</td></tr>
+<tr><td class="t">final-report-data.json</td><td>the data this report is rendered from</td></tr>
+<tr><td class="t">campaign-stopped.marker</td><td>corpus snapshot at the moment of stop</td></tr>
+</table></div></section>
+<footer><p class="dim">Rendered 2026-08-31 13:10:31 CEST. Figures come from the campaign's own instrumentation; the data file is included so they can be checked.</p></footer>
+</main></div>

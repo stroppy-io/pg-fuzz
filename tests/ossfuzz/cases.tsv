@@ -1,0 +1,63 @@
+# Red/green cases for the OSS-Fuzz postgresql harness defects.
+#
+# Each case is an assertion about UPSTREAM's harnesses that must FAIL before the
+# corresponding fix and PASS after it. Upstream ships no tests for these files,
+# so these live here rather than there; they are written against upstream's
+# layout so they can be contributed later if the project wants them.
+#
+# THE ORACLE IS --enable-cassert. Upstream builds without it (project.yaml lists
+# only the address sanitizer), which is precisely why these defects survived for
+# years: without assertions a harness that hands the wrong structure to a
+# function does not crash, it quietly does the wrong thing. The suite therefore
+# builds with assertions on, and that is itself one of the recommendations.
+#
+# Columns (tab-separated):
+#   id       short name, used in output and to pick a single case
+#   defect   which defect from FINDINGS/oss-fuzz-harness-bugs it covers
+#   needs    defect fixes that must be applied before this case can discriminate,
+#            or "-" for none. Defect 13 aborts every backend harness at startup,
+#            so cases 1, 2, 3 and 9 cannot observe anything until it is fixed --
+#            they are run in a second pass with fixes/13-*.diff applied. 13 itself
+#            must therefore run with nothing applied, which is why it is a case
+#            and not a precondition. Demoting the most reproducible defect to
+#            infrastructure made it invisible in every count.
+#   target   fuzz target to run
+#   input    file under inputs/, or "-" for none
+#   expect   what a FIXED harness does:
+#              exit0            runs the input and exits cleanly
+#              execs>N          reports more than N executed units
+#              wall<N           the run finishes within N seconds. For defects whose
+#                               symptom is "nothing stops this" -- no assertion can
+#                               express a timeout that never fires, only a clock can.
+#              stderr:PATTERN   stderr matches PATTERN (an ERROR, not a crash)
+#              covers:FUNC      libFuzzer reports FUNC as covered. The honest form
+#                               for a defect whose symptom is "this code is never
+#                               reached" rather than a crash -- defect 1 does not
+#                               abort, it makes a real statement fail to parse so
+#                               everything below is never entered.
+#              nocover:FUNC     FUNC must NOT be covered. Defect 2 runs its error
+#                               recovery after a successful parse, so recovery
+#                               functions appearing on a clean input IS the defect.
+#              noassert:PATTERN no `TRAP: failed Assert(...)` matching PATTERN.
+#                               This is the discriminating form: matching on exit
+#                               status alone counted two unrelated aborts as six
+#                               defect reproductions, because an abort is an
+#                               abort. A case must name the assertion it expects
+#                               to stop firing, or it proves nothing.
+#   note     what the defect does when unfixed
+#
+# DROPPED: defect 9 (MyBackendType). It needs a temporary relation to actually be
+# created, and no deployed target executes statements -- simple_query stops after
+# analyse and plan. There is no input to this harness that reaches it, so a case
+# would be theatre. The defect is real; it is simply not observable here.
+#
+#id	defect	needs	target	input	expect	note
+timing-starts	13	-	simple_query_fuzzer	select-1.sql	noassert:timing_initialized	unfixed: pg_initialize_timing() never called, so every backend harness aborts at startup
+protocol-starts	4	-	protocol_fuzzer	startup-msg.bin	stderr:PostgreSQL stand-alone backend	unfixed: no dbname in argv, so single-user mode falls back to the username and the backend never boots
+json-keeps-context	14	-	json_parser_fuzzer	deep-array.json	noassert:context != CurrentMemoryContext	unfixed: delete_context(TopMemoryContext) while it is current -- a DEPLOYED target
+deep-recursion	12	-	json_parser_fuzzer	deep-array.json	stderr:stack depth limit exceeded	unfixed: stack base on the init frame, so check_stack_depth never fires
+reaches-analyzer	1	13	simple_query_fuzzer	select-1.sql	covers:pg_analyze_and_rewrite_fixedparams	unfixed: parses as a TYPE NAME, so a real statement never reaches the analyser
+reaches-planner	1	13	simple_query_fuzzer	select-1.sql	covers:pg_plan_queries	unfixed: same cause, one level deeper
+no-restart-per-input	5	4	protocol_fuzzer	startup-msg.bin	execs>1	unfixed: PostgresSingleUserMain runs again per input, re-entering one-shot startup -- aborts, not asserts
+timeout-fires	11	4	protocol_fuzzer	slow-query.bin	wall<30	unfixed: libFuzzer's -timeout cannot fire because PostgreSQL owns the clock
+second-error-recovers	6	13	simple_query_fuzzer	syntax-error.sql	noassert:PG_exception_stack|elog.c	unfixed: the fuzzer_first_run guard skips per-call handler setup, so the 2nd error unwinds into a dead frame

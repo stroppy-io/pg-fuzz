@@ -1,0 +1,107 @@
+{
+  "seed": 116,
+  "failure": "after_delete_half:t1/t1: orioledb_tbl_check: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\nconnection to server was lost",
+  "notes": [
+    "serializable_write on t1: HINT:  Set orioledb.serializable to 'table_lock' or 'repeatable_read' to enable SERIALIZABLE for OrioleDB tables."
+  ],
+  "scenario": {
+    "seed": 116,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 1
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": "ts_a",
+    "writers": 4,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "text",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "uuid",
+          "bigint[]",
+          "bigint"
+        ],
+        "indexes": [
+          "hash",
+          "multicolumn",
+          "unique"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "int",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "jsonb"
+        ],
+        "indexes": [],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "heap",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "date",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "timestamptz",
+          "uuid",
+          "text"
+        ],
+        "indexes": [
+          "hash",
+          "btree"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_a",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "rollback_ddl",
+        "table": "t2"
+      },
+      {
+        "op": "serializable_write",
+        "table": "t1"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t0"
+      },
+      {
+        "op": "concurrent_write",
+        "table": "t2"
+      },
+      {
+        "op": "delete_half",
+        "table": "t1"
+      }
+    ]
+  }
+}

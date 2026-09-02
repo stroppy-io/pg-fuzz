@@ -1,0 +1,106 @@
+{
+  "seed": 1004,
+  "failure": "setup: CREATE UNLOGGED TABLE t1 (i bigint NOT NULL, j bigint NOT NU -> ERROR:  partitioned tables cannot be unlogged",
+  "notes": [],
+  "scenario": {
+    "seed": 1004,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "repeatable_read",
+      "orioledb.default_compress": 5
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "8MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": null,
+    "writers": 4,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "smallint",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "uuid"
+        ],
+        "indexes": [
+          "hash",
+          "partial"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 50000
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": true,
+        "pk": "composite_typed",
+        "pk_extra": "date",
+        "compress": null,
+        "unlogged": true,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "timestamptz",
+          "bigint",
+          "numeric"
+        ],
+        "indexes": [],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 500
+      }
+    ],
+    "steps": [
+      {
+        "op": "update_all",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_ddl",
+        "table": "t1"
+      },
+      {
+        "op": "upsert",
+        "table": "t0"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t1"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t0"
+      },
+      {
+        "op": "insert_more",
+        "table": "t0"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t0"
+      },
+      {
+        "op": "checkpoint",
+        "table": "t1"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t1"
+      },
+      {
+        "op": "attach_partition",
+        "table": "t0"
+      }
+    ]
+  }
+}

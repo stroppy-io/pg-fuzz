@@ -1,0 +1,110 @@
+{
+  "seed": 1072,
+  "failure": "update_all: ERROR:  duplicate key value violates unique constraint \"index_bridge\"\nDETAIL:  Key (index_bridging_ctid)=((0,1)) already exists.",
+  "notes": [],
+  "scenario": {
+    "seed": 1072,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 5
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "4MB",
+      "orioledb.undo_circular_buffer_size": "1MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "single",
+        "pk_extra": "text",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "timestamptz",
+          "bigint[]",
+          "uuid"
+        ],
+        "indexes": [
+          "gin",
+          "brin",
+          "spgist"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_a",
+        "rows": 5000
+      },
+      {
+        "name": "t1",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "text",
+        "compress": 1,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "text"
+        ],
+        "indexes": [
+          "hash",
+          "spgist"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 5000
+      }
+    ],
+    "steps": [
+      {
+        "op": "rollback_delete",
+        "table": "t0"
+      },
+      {
+        "op": "alter_type",
+        "table": "t0"
+      },
+      {
+        "op": "vacuum",
+        "table": "t1"
+      },
+      {
+        "op": "upsert",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_delete",
+        "table": "t1"
+      },
+      {
+        "op": "concurrent_ddl",
+        "table": "t1"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t1"
+      },
+      {
+        "op": "checkpoint",
+        "table": "t0"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t0"
+      },
+      {
+        "op": "update_all",
+        "table": "t0"
+      }
+    ]
+  }
+}

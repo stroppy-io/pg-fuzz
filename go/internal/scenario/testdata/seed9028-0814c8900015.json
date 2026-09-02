@@ -1,0 +1,90 @@
+{
+  "seed": 9028,
+  "failure": "after_load/t1: probe failed: SELECT count(*) FROM t1 WHERE v > 0",
+  "notes": [],
+  "build": {
+    "note": "no BUILD-INFO.json -- build predates provenance recording"
+  },
+  "scenario": {
+    "seed": 9028,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": -1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "1MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "single",
+        "pk_extra": "double precision",
+        "compress": null,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [
+          "btree",
+          "expression"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": "ts_b",
+        "rows": 50000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "timestamptz",
+        "compress": -1,
+        "unlogged": false,
+        "wide": false,
+        "generated": true,
+        "extra_types": [],
+        "indexes": [
+          "brin",
+          "hash"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_b",
+        "rows": 50000
+      }
+    ],
+    "steps": [
+      {
+        "op": "attach_partition",
+        "table": "t0"
+      },
+      {
+        "op": "move_across_partition",
+        "table": "t1"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t0"
+      },
+      {
+        "op": "prepare_2pc",
+        "table": "t1"
+      },
+      {
+        "op": "detach_partition",
+        "table": "t0"
+      },
+      {
+        "op": "upsert",
+        "table": "t1"
+      }
+    ]
+  }
+}

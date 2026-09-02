@@ -1,0 +1,78 @@
+{
+  "seed": 102,
+  "failure": "after_set_tablespace:t0/t0: count failed",
+  "notes": [],
+  "scenario": {
+    "seed": 102,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "table_lock",
+      "orioledb.default_compress": -1
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": "ts_a",
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "uuid",
+        "compress": 5,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "timestamptz"
+        ],
+        "indexes": [
+          "gin",
+          "partial",
+          "expression"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "truncate_refill",
+        "table": "t0"
+      },
+      {
+        "op": "insert_more",
+        "table": "t0"
+      },
+      {
+        "op": "concurrent_ddl",
+        "table": "t0"
+      },
+      {
+        "op": "concurrent_write",
+        "table": "t0"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t0"
+      },
+      {
+        "op": "serializable_write",
+        "table": "t0"
+      },
+      {
+        "op": "delete_half",
+        "table": "t0"
+      },
+      {
+        "op": "truncate_refill",
+        "table": "t0"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t0"
+      }
+    ]
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "seed": 101,
+  "failure": "after_savepoint_partial:t1/t2: orioledb_tbl_check: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\nconnection to server was lost",
+  "notes": [],
+  "scenario": {
+    "seed": 101,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "repeatable_read",
+      "orioledb.default_compress": -1
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 2,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "heap",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "uuid",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "jsonb",
+          "timestamptz"
+        ],
+        "indexes": [
+          "multicolumn"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 50000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "smallint",
+        "compress": -1,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "timestamptz"
+        ],
+        "indexes": [
+          "unique",
+          "partial",
+          "btree"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": "ts_a",
+        "rows": 2000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite_typed",
+        "pk_extra": "date",
+        "compress": -1,
+        "unlogged": false,
+        "wide": true,
+        "generated": true,
+        "extra_types": [],
+        "indexes": [
+          "unique",
+          "btree",
+          "spgist"
+        ],
+        "tablespace": "ts_a",
+        "index_tablespace": null,
+        "rows": 5000
+      }
+    ],
+    "steps": [
+      {
+        "op": "alter_type",
+        "table": "t0"
+      },
+      {
+        "op": "move_index",
+        "table": "t2"
+      },
+      {
+        "op": "serializable_write",
+        "table": "t0"
+      },
+      {
+        "op": "restart_clean",
+        "table": "t1"
+      },
+      {
+        "op": "reindex",
+        "table": "t1"
+      },
+      {
+        "op": "restart_crash",
+        "table": "t0"
+      },
+      {
+        "op": "delete_half",
+        "table": "t2"
+      },
+      {
+        "op": "savepoint_partial",
+        "table": "t1"
+      },
+      {
+        "op": "move_across_partition",
+        "table": "t2"
+      }
+    ],
+    "oriole_conf": {
+      "orioledb.main_buffers": "8MB",
+      "orioledb.undo_circular_buffer_size": "4MB"
+    }
+  }
+}

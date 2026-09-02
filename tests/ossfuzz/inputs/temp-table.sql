@@ -1,0 +1,1 @@
+CREATE TEMP TABLE t(i int);

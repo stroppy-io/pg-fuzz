@@ -1,0 +1,45 @@
+Enable assertions in the test build.
+
+This is NOT one of the defect fixes. It is the oracle the suite needs, and it is
+applied in BOTH red and green modes so that the only difference between them is
+the fixes themselves.
+
+Upstream builds without --enable-cassert: project.yaml lists only the address
+sanitizer, and build.sh runs a bare ../configure twice. That is precisely why
+these defects survived for years. PostgreSQL has thousands of internal
+consistency checks that are compiled out unless asked for, and without them a
+harness that hands the wrong structure to a function does not crash -- it
+quietly does the wrong thing and keeps producing output that looks like work. A
+low bug count then reads as "the database is clean" rather than "nothing is
+being tested".
+
+So four of the six cases are unobservable without this: parses-sql,
+recovers-on-error, keeps-context and temp-relation all describe a harness
+corrupting state rather than crashing. With assertions on they abort on the
+first input; with them off they proceed and produce nothing to assert against.
+
+The suite therefore turns assertions on and leaves everything else exactly as
+upstream ships it. That doubles as a demonstration of the recommendation worth
+making independently of any individual fix: build with assertions periodically,
+because it is the cheapest bug detector in the tree and it is currently off.
+
+--- a/projects/postgresql/build.sh
++++ b/projects/postgresql/build.sh
+@@ -41,11 +41,11 @@
+ # Using the system ICU keeps headers, shared libraries and static libraries all
+ # at the same version, and drops a network fetch plus a full ICU build.
+
+-CC="" CXX="" CFLAGS="" CXXFLAGS="" su fuzzuser -c ../configure
++CC="" CXX="" CFLAGS="" CXXFLAGS="" su fuzzuser -c "../configure --enable-cassert"
+ cd src/backend/fuzzer
+ su fuzzuser -c "make -j10 createdb"
+ chown -R root .
+ mv temp/data .
+ cp -r data $OUT/
+ cd ../../..
+ cp -r tmp_install $OUT/
+ make clean
+
+-../configure
++../configure --enable-cassert
+ make -j$(nproc)

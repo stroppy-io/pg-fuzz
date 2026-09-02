@@ -1,0 +1,15 @@
+# The substrate this tree is built against.
+#
+# Recorded is not the same as pinned. Without this file the oss-fuzz clone was
+# whatever master happened to be on the day somebody bootstrapped, and two runs
+# on two machines were not comparable however carefully everything else was
+# controlled.
+#
+# Moving these is a decision. Change them in a commit that says why, and expect
+# every fingerprint after it to differ from every fingerprint before it -- that
+# is the point, and the campaign index will say so.
+#
+# Update with: pgfuzz pin -update -reason "..."
+
+commit=0f4d4d3004beb4946db46905163b1638777395a9
+base_image=gcr.io/oss-fuzz-base/base-builder@sha256:feb9e59248ce2de645388db04986b84d668692e7723eca6104f935494866d679

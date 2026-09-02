@@ -1,0 +1,19 @@
+{
+  "slug": "pg17-ext-all",
+  "run_id": "20260828-214306-7ef7a089",
+  "config_fingerprint": "7ef7a089",
+  "archived_at": "2026-08-28T19:49:29Z",
+  "host": "lubuntu1.h.khaprov.com",
+  "tool_commit": "59f30cb",
+  "fp_version": 2,
+  "oss_fuzz": {"commit": "0f4d4d3004beb4946db46905163b1638777395a9", "dirty": false, "base_image": "gcr.io/oss-fuzz-base/base-builder:ubuntu-24-04@sha256:feb9e59248ce2de645388db04986b84d668692e7723eca6104f935494866d679"},
+  "workspaces": ["pg17-ext-all-add","pg17-ext-all-und"],
+  "corpus": {"pg17-ext-all-add": {"inputs": 1108889, "verified": true},"pg17-ext-all-und": {"inputs": 1168885, "verified": true}},
+  "harness": {"sources_sha256": "d5c35915a6e4f781", "last_commit": "65dfd0f"},
+  "fuzzers": {"pg17-ext-all-add": {"backend_types_fuzzer": "9d0d3c0802159ebf","binary_recv_fuzzer": "8771478e2fab0677","config_file_fuzzer": "666034704204add3","conninfo_fuzzer": "fe0a4867ff55144d","datetime_fuzzer": "9cd8b7a029d1dbaf","encoding_fuzzer": "6de9f3bd5be2ee40","extension_funcs_fuzzer": "0122013a56084147","formatting_fuzzer": "e75aa6ac5c0f6b06","geo_fuzzer": "ab15e098f966e0a2","hba_file_fuzzer": "b4dfd29b172b35b2","jsonb_fuzzer": "f28ce353086794ae","json_parser_fuzzer": "a817907344dca97b","jsonpath_fuzzer": "867f875ef59934ee","network_fuzzer": "a8d4ba22cd41ebe0","numeric_fuzzer": "6576d25a4b6cddc0","protocol_fuzzer": "79965fd0d5b59eef","raw_parser_fuzzer": "9c7ab54935a9a37c","regex_fuzzer": "ce5d28f544226c19","scalar_types_fuzzer": "f80fdca56cacba22","simple_query_fuzzer": "d60b5440d0e16da2","spi_query_fuzzer": "c670287617e538d8","tsearch_fuzzer": "40b7e6ccc5220f27","xlogreader_fuzzer": "da8dc94ac6ce3b10"},"pg17-ext-all-und": {"backend_types_fuzzer": "58a49d965ac7d0d6","binary_recv_fuzzer": "c29bb3c331f3b535","config_file_fuzzer": "8b19ba4d43cb6201","conninfo_fuzzer": "0319f549c1ba2398","datetime_fuzzer": "3031efe9fda376b1","encoding_fuzzer": "eaf57b410b0a7e57","extension_funcs_fuzzer": "e0cba521bb013f04","formatting_fuzzer": "709288d6ea02cee6","geo_fuzzer": "28921e6c71a6430f","hba_file_fuzzer": "9116ab2e75b4742f","jsonb_fuzzer": "0541a5b0e7c5b35b","json_parser_fuzzer": "45f91333c428c0b3","jsonpath_fuzzer": "52141aa1b003340e","network_fuzzer": "aa32edf2df48a0f3","numeric_fuzzer": "80416d3497fd8aaa","protocol_fuzzer": "73fab3e8749b818d","raw_parser_fuzzer": "2ff69d6411b7837e","regex_fuzzer": "b004a236863d33f7","scalar_types_fuzzer": "5267146a8c6c5de5","simple_query_fuzzer": "2f76243c61ef1d72","spi_query_fuzzer": "e310c8d2f94b4e9a","tsearch_fuzzer": "fc95bc7d8bfaef3d","xlogreader_fuzzer": "ad62d98b964a4e3c"}},
+  "reproducers": {"pg17-ext-all-add": 946,"pg17-ext-all-und": 1188},
+  "builds": {
+    "pg17-ext-all-add": {  "pg_ref_sha": "25c49f3a4a742ba283f5cc43cc7f1d361552e917",  "plugins": {"pgaudit": "538f89a", "pgauditlogtofile": "f6ed3f4", "pg_background": "5fc36a3", "pg_repack": "6902ab3", "tds_fdw": "5fd7d42", "pg_cron": "465b38c", "orafce": "local:57223d3", "pgsql-http": "fbea6fe", "pg_profile": "306f0fe", "pg_show_plans": "da2dc09", "pg_stat_kcache": "2f1a1f5", "credcheck": "local:35c6a79"},  "orioledb": false,  "sanitizer": "address",  "fuzzing_engine": "libfuzzer",  "server_tree": "uninstrumented gcc, --enable-cassert",  "server_asan": false,  "cassert": true,  "built_at": "2026-08-28T13:30:49Z"},
+    "pg17-ext-all-und": {  "pg_ref_sha": "25c49f3a4a742ba283f5cc43cc7f1d361552e917",  "plugins": {"pgaudit": "538f89a", "pgauditlogtofile": "f6ed3f4", "pg_background": "5fc36a3", "pg_repack": "6902ab3", "tds_fdw": "5fd7d42", "mysql_fdw": "4aca57f", "pg_cron": "465b38c", "orafce": "local:57223d3", "pgsql-http": "fbea6fe", "pg_profile": "306f0fe", "pg_show_plans": "da2dc09", "pg_stat_kcache": "2f1a1f5", "credcheck": "local:35c6a79"},  "orioledb": false,  "sanitizer": "undefined",  "fuzzing_engine": "libfuzzer",  "server_tree": "uninstrumented gcc, --enable-cassert",  "server_asan": false,  "cassert": true,  "built_at": "2026-08-28T13:32:31Z"}
+  }
+}

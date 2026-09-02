@@ -1,0 +1,111 @@
+{
+  "seed": 9012,
+  "failure": "after_concurrent_ddl:t0/t0: orioledb_tbl_check: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\nconnection to server was lost",
+  "notes": [],
+  "build": {
+    "note": "no BUILD-INFO.json -- build predates provenance recording"
+  },
+  "scenario": {
+    "seed": 9012,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "error",
+      "orioledb.default_compress": 1
+    },
+    "oriole_conf": {
+      "orioledb.main_buffers": "8MB",
+      "orioledb.undo_circular_buffer_size": "4MB",
+      "orioledb.debug_disable_bgwriter": "off"
+    },
+    "warm_default_tablespace": true,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "none",
+        "pk_extra": "numeric",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": false,
+        "extra_types": [
+          "bigint",
+          "uuid"
+        ],
+        "indexes": [
+          "partial",
+          "hash"
+        ],
+        "tablespace": null,
+        "index_tablespace": "ts_b",
+        "rows": 2000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "single",
+        "pk_extra": "int",
+        "compress": null,
+        "unlogged": false,
+        "wide": true,
+        "generated": true,
+        "extra_types": [
+          "bigint[]",
+          "bigint"
+        ],
+        "indexes": [
+          "gin"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 2000
+      }
+    ],
+    "steps": [
+      {
+        "op": "concurrent_ddl",
+        "table": "t0"
+      },
+      {
+        "op": "restart_clean",
+        "table": "t0"
+      },
+      {
+        "op": "serializable_write",
+        "table": "t0"
+      },
+      {
+        "op": "vacuum",
+        "table": "t0"
+      },
+      {
+        "op": "churn_evict",
+        "table": "t1"
+      },
+      {
+        "op": "analyze",
+        "table": "t0"
+      },
+      {
+        "op": "restart_clean",
+        "table": "t0"
+      },
+      {
+        "op": "move_across_partition",
+        "table": "t0"
+      },
+      {
+        "op": "analyze",
+        "table": "t0"
+      },
+      {
+        "op": "checkpoint",
+        "table": "t1"
+      }
+    ]
+  }
+}

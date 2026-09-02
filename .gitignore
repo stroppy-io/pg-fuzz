@@ -1,0 +1,21 @@
+# The built binary. It is the deliverable, not a source: `go build -o
+# go/bin/pgfuzz ./go/cmd/pgfuzz` reproduces it, and a 9.8MB blob per commit
+# would be most of this repository's history.
+go/bin/
+
+# The RECORD a campaign accumulates, which is data rather than tool. Floors,
+# the per-round series, the transition history and the per-profile records all
+# grow without bound and belong to whoever ran the campaign.
+scripts/ratchet-baseline.json
+scripts/ratchet-baseline.json.lock
+scripts/ratchet-series.jsonl
+scripts/ratchet-history.jsonl
+scripts/ratchets/
+scripts/coverage-*.jsonl
+scripts/window-samples.jsonl
+scripts/autocap-removed.jsonl
+scripts/target-budgets.tsv
+
+# Scratch
+*.tmp
+*.tmp.[0-9]*

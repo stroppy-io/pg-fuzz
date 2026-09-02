@@ -1,0 +1,244 @@
+package campaign
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"time"
+
+	"pgfuzz/internal/fuzz"
+	"pgfuzz/internal/logs"
+)
+
+// Entry is one workspace in the matrix.
+type Entry struct {
+	Name string
+	Dir  string
+	// Data is where this entry's corpus, artifacts and lineage live: the
+	// workspace for a local run, the campaign's own directory for a sealed
+	// one. See campaign.Manifest.Sealed.
+	Data    string
+	OutDir  string
+	Targets []string
+	MaxLen  int
+	San     string
+}
+
+// Config is one campaign.
+type Config struct {
+	Slug       string
+	RunID      string
+	Hours      float64
+	PerTarget  int
+	Jobs       int
+	Entries    []Entry
+	OnDeadline OnDeadline
+	MaxOverrun time.Duration
+	Series     Series
+	Out        io.Writer
+
+	// Productivity is ws -> target -> newest new_units, from the ratchet
+	// series. Empty means "order by rotation alone", which is what happens
+	// before a workspace has any history.
+	Productivity map[string]map[string]int
+}
+
+// defaultOverrun sizes the backstop from the widest workspace in the campaign.
+func defaultOverrun(c Config) time.Duration {
+	widest := 1
+	for _, e := range c.Entries {
+		if n := len(e.Targets); n > widest {
+			widest = n
+		}
+	}
+	return time.Duration(c.PerTarget*widest*3) * time.Second
+}
+
+// Run executes rounds until the deadline, applying the deadline policy.
+func Run(ctx context.Context, c Config) error {
+	if c.OnDeadline == "" {
+		c.OnDeadline = Cut
+	}
+	if c.MaxOverrun == 0 {
+		// THE BACKSTOP BEHIND THE DEADLINE POLICY, sized as "one more sweep of
+		// the widest workspace, and then some".
+		//
+		// It used to be PerTarget * 23 * 3, where 23 is the number of targets
+		// this project happens to have -- so a workspace with more targets got
+		// a guard that fires mid-sweep, and one with fewer got a guard three
+		// times longer than it needs. Derived from the entries instead.
+		//
+		// The 3x is not slack for its own sake: at short budgets the container
+		// start dominates, and a 15-second slice costs about 45 seconds of
+		// wall clock. It is the difference between what a slice is ALLOWED and
+		// what it takes.
+		c.MaxOverrun = defaultOverrun(c)
+	}
+	start := time.Now()
+	deadline := start.Add(time.Duration(c.Hours * float64(time.Hour)))
+	hardStop := deadline.Add(c.MaxOverrun)
+	say := func(f string, a ...any) {
+		if c.Out != nil {
+			fmt.Fprintf(c.Out, f+"\n", a...)
+		}
+	}
+
+	for round := 1; ; round++ {
+		if time.Now().After(deadline) && c.OnDeadline != FinishRound {
+			break
+		}
+		if time.Now().After(hardStop) {
+			say("hard stop: overran by %s, round %d left incomplete", c.MaxOverrun, round)
+			break
+		}
+		say("\n=== round %d (%s left) ===", round, time.Until(deadline).Round(time.Minute))
+
+		// ROTATE THE WORKSPACE ORDER, and this is the half that matters more
+		// than rotating targets. The order is fixed, so the same arm is always
+		// the one that runs out of budget -- and oriolebare* sorts after
+		// oriole*, which made the CONTROL arm of a three-way diff the one that
+		// got cut. A prime stride so neighbours do not share a fate for long.
+		order := rotate(c.Entries, round*7)
+		// Within each workspace the TARGETS are ordered most-productive-first
+		// when the series says which those are, so a round cut short by the
+		// deadline spends what it has where the finding is. Rotation and
+		// productivity are not alternatives: rotation is fairness ACROSS
+		// rounds, this is value WITHIN one that may not finish.
+
+		for _, e := range order {
+			if time.Now().After(hardStop) {
+				break
+			}
+			if time.Now().After(deadline) {
+				if c.OnDeadline == Cut {
+					break
+				}
+				say("past deadline, %s: %s", c.OnDeadline, e.Name)
+				if c.OnDeadline == FinishSweep {
+					// One more workspace, at full length, then stop.
+					runOne(ctx, c, e, round, say, time.Time{})
+					return nil
+				}
+			}
+			runOne(ctx, c, e, round, say, deadline)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+	}
+	return nil
+}
+
+// runOne sweeps one workspace.
+//
+// The deadline is passed DOWN, not merely checked between workspaces. Under
+// `cut` the clock has to be able to stop a sweep already in progress: checking
+// only at workspace boundaries meant a campaign given twelve minutes ran a
+// full round of 23 targets first, which is most of an hour. A deadline is a
+// promise about when the machine is free, and a check that fires only between
+// workspaces does not keep it.
+func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, ...any), deadline time.Time) {
+	// Most-productive-first WITHIN the workspace, when the series says which
+	// those are. Reordered on a COPY of the entry, so nothing else sees it.
+	//
+	// THE SWEEP THEN ROTATES THIS BY THE ROUND, and both are needed.
+	//
+	// Productivity alone starves. A target that has not run has no new units,
+	// so it sorts last, so it does not run -- the same self-reinforcing shape
+	// that once left regex_fuzzer at position 18 of 23 and spi_query at 21,
+	// both immediately after being repaired, which is exactly when they most
+	// needed the time.
+	//
+	// Rotation alone wastes. A round cut short by the deadline drops its tail,
+	// and with a fixed order that tail is the same targets every time.
+	//
+	// Composed, the productive targets lead the order and the rotation walks
+	// the starting point through it, so a short round loses somewhere
+	// different each round and every target reaches an early slot eventually.
+	if latest := c.Productivity[e.Name]; len(latest) > 0 {
+		e.Targets = ByProductivity(e.Targets, latest)
+	}
+	say("round %d: sweeping %s", round, e.Name)
+
+	// APPENDED AS EACH SLICE FINISHES, not after the workspace does.
+	//
+	// The series is the model, and a model written only on the happy path is
+	// not one. Batching the whole workspace meant a campaign stopped
+	// mid-sweep -- by the deadline, by Ctrl-C, by a kill -9 -- lost every
+	// slice it had already completed: twenty minutes of real fuzzing, with
+	// nothing on disk to show it happened. Verified during a smoke test, six
+	// targets and two minutes in, with an empty series.jsonl.
+	//
+	// It also removes an attribution guess. The result index used to be
+	// mapped back to a target by recomputing the same rotation the sweep
+	// applied, and any disagreement between the two silently filed every row
+	// under the wrong name. OnDone is handed the target.
+	record := func(t string, r fuzz.Result) {
+		st, _ := logs.ParseFile(r.LogPath)
+		// The trajectory, from the same log. Without it a slice records what
+		// it reached and nothing about whether it moved -- and "cov 6156" is
+		// the same line whether the slice added 2,276 edges or none.
+		traj := logs.Trajectory{}
+		if pts, err := logs.ReadTrajectory(r.LogPath); err == nil {
+			traj = logs.Summarise(pts)
+		}
+		if err := c.Series.Append(Slice{
+			RunID: c.RunID, Round: round, Workspace: e.Name, Target: t,
+			Started: time.Now().UTC().Format(time.RFC3339),
+			Seconds: c.PerTarget, Jobs: c.Jobs,
+			Execs: st.Execs, NewUnits: st.NewUnits,
+			Cov: st.Cov, Ft: st.Ft, Corpus: r.CorpusTo,
+			// The slice's OWN artifacts, not the directory's total. The
+			// total is weeks of accumulation and would read as this run's
+			// output on every dashboard that shows it.
+			Artifacts:       r.NewArtifacts(),
+			ArtifactsBefore: r.ArtifactsFrom, ArtifactsAfter: r.ArtifactsTo,
+			Slowest:  st.SlowestUnit,
+			CovStart: traj.CovStart, FtStart: traj.FtStart,
+			CovGained: traj.CovGainedInRun, FtGained: traj.FtGainedInRun,
+			LastNewEdgeAt: traj.LastNewEdgeAt, LastExecSeen: traj.LastExecSeen,
+			SaturatedPct: traj.SaturatedPct,
+			// Alive means it EXECUTED something. A slice that ran the
+			// container and executed nothing is the failure every other
+			// number in this row would otherwise hide.
+			Alive: st.Execs > 0 || traj.LastExecSeen > 0,
+		}); err != nil {
+			// Said out loud. A series row that failed to write is a slice
+			// that, as far as every later reader is concerned, never ran.
+			say("  %s/%s: could not record the slice: %v", e.Name, t, err)
+		}
+	}
+
+	res, err := fuzz.Sweep(ctx, fuzz.SweepRequest{
+		Request: fuzz.Request{
+			Workspace: e.Dir, Data: e.Data, Name: e.Name, OutDir: e.OutDir,
+			Seconds: c.PerTarget, Jobs: c.Jobs, MaxLen: e.MaxLen,
+			Sanitizer: e.San, Lineage: true,
+		},
+		Targets:  e.Targets,
+		Rotate:   round,
+		Deadline: deadline,
+		OnStart:  func(t string, i, n int) { say("  ---- %s ---- (%d/%d)", t, i, n) },
+		OnDone:   record,
+	})
+	if err != nil {
+		say("  %s: %v", e.Name, err)
+	}
+	if len(res) < len(e.Targets) {
+		// Recorded as a fact, not left to be inferred from a log: a round that
+		// ran 20 of 23 writes 20 healthy results and passes every gate that
+		// judges only what it was handed.
+		say("  SHORT ROUND: %d of %d targets never ran", len(e.Targets)-len(res), len(e.Targets))
+	}
+}
+
+func rotate(in []Entry, by int) []Entry {
+	n := len(in)
+	if n < 2 {
+		return in
+	}
+	off := ((by % n) + n) % n
+	out := make([]Entry, 0, n)
+	out = append(out, in[off:]...)
+	return append(out, in[:off]...)
+}

@@ -1,0 +1,115 @@
+{
+  "seed": 136,
+  "failure": "after_set_tablespace:t2/t2: access paths disagree -- seqscan='500' indexscan='0' for [SELECT count(*) FROM t2 WHERE v > 0]",
+  "notes": [],
+  "scenario": {
+    "seed": 136,
+    "orioledb": true,
+    "oriole_settings": {
+      "orioledb.serializable": "table_lock",
+      "orioledb.default_compress": 1
+    },
+    "warm_default_tablespace": false,
+    "default_tablespace": null,
+    "writers": 1,
+    "tables": [
+      {
+        "name": "t0",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "composite",
+        "pk_extra": "date",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": true,
+        "extra_types": [
+          "bigint",
+          "text",
+          "uuid"
+        ],
+        "indexes": [],
+        "tablespace": null,
+        "index_tablespace": null,
+        "rows": 5000
+      },
+      {
+        "name": "t1",
+        "am": "orioledb",
+        "partitioned": false,
+        "pk": "single",
+        "pk_extra": "timestamptz",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [],
+        "indexes": [],
+        "tablespace": null,
+        "index_tablespace": "ts_b",
+        "rows": 5000
+      },
+      {
+        "name": "t2",
+        "am": "orioledb",
+        "partitioned": true,
+        "pk": "none",
+        "pk_extra": "timestamptz",
+        "compress": 5,
+        "unlogged": false,
+        "wide": false,
+        "generated": false,
+        "extra_types": [
+          "bigint[]",
+          "timestamptz"
+        ],
+        "indexes": [
+          "hash",
+          "btree",
+          "expression"
+        ],
+        "tablespace": "ts_b",
+        "index_tablespace": null,
+        "rows": 500
+      }
+    ],
+    "steps": [
+      {
+        "op": "insert_more",
+        "table": "t1"
+      },
+      {
+        "op": "concurrent_write",
+        "table": "t0"
+      },
+      {
+        "op": "vacuum_full",
+        "table": "t1"
+      },
+      {
+        "op": "set_tablespace",
+        "table": "t2"
+      },
+      {
+        "op": "concurrent_ddl",
+        "table": "t1"
+      },
+      {
+        "op": "analyze",
+        "table": "t1"
+      },
+      {
+        "op": "upsert",
+        "table": "t1"
+      },
+      {
+        "op": "rollback_insert",
+        "table": "t0"
+      },
+      {
+        "op": "update_all",
+        "table": "t1"
+      }
+    ]
+  }
+}
