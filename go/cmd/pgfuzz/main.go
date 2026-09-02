@@ -1498,13 +1498,34 @@ func cmdRatchet(argv []string) int {
 		fmt.Printf("  %s: %d floor(s) recorded, %d raised   |   rate: %d recorded, %d raised\n",
 			c.Name, res.Added, res.Raised, res.RateAdded, res.RateRaised)
 		acks, _ := ratchet.LoadAcks(pp.Acks)
-		for _, t := range ratchet.Expired(obs, b.Floors[c.Name], acks, b.Tol()) {
+		// Against the floors as JUST RAISED, not the pre-lock copy: a target
+		// whose floor rose in this very update was otherwise measured against
+		// the lower old one, so "no longer starves" was reported too eagerly.
+		after, err := pp.LoadBaseline(*basePath)
+		if err != nil {
+			after = b
+		}
+		for _, t := range ratchet.Expired(obs, after.Floors[c.Name], acks, after.Tol()) {
 			fmt.Printf("  expired   %s no longer starves -- remove its row from known-starved.tsv\n", t)
 		}
 		return 0
 	}
 
-	rep := ratchet.Check(b, c.Name, obs, nil)
+	// THE ACKNOWLEDGEMENT LIST, which this passed as nil.
+	//
+	// ratchet.Check supports it and there is a passing test for the
+	// Acknowledged outcome; the line below is the only caller, so that outcome
+	// was unreachable and the `known` branch a few lines down was dead. A
+	// target somebody wrote a row for would regress the round every round,
+	// forever -- which is precisely what teaches people to ignore a gate.
+	// Latent only because the file has no data rows yet: the first row anyone
+	// added would have done nothing.
+	acks, err := ratchet.LoadAcks(pp.Acks)
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "pgfuzz: reading the acknowledgement list: %v\n", err)
+		return 2
+	}
+	rep := ratchet.Check(b, c.Name, obs, acks)
 	if rep.Seeded {
 		// Not a pass, and said so: a floor cannot be regressed from before it
 		// exists, and silence here makes a workspace with no history look
