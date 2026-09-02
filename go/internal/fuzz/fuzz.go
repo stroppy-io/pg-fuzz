@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -69,7 +70,11 @@ type Result struct {
 	// correcting, arriving through the dashboard instead.
 	ArtifactsFrom int
 	ArtifactsTo   int
-	ExitCode      int
+	// Harvested is how many reproducers this run moved out of the scratch
+	// overlay. Recorded separately from the artifacts delta so "found three"
+	// and "the directory happens to hold three more" stay distinguishable.
+	Harvested int
+	ExitCode  int
 }
 
 // NewArtifacts is what THIS slice produced.
@@ -191,13 +196,27 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	runErr := cmd.Run()
 
 	res := Result{
-		Elapsed:       time.Since(start),
-		LogPath:       logPath,
-		CorpusFrom:    before,
-		CorpusTo:      countFiles(corpus),
-		ArtifactsFrom: artsBefore,
-		ArtifactsTo:   countArtifacts(arts),
+		Elapsed:    time.Since(start),
+		LogPath:    logPath,
+		CorpusFrom: before,
+		CorpusTo:   countFiles(corpus),
 	}
+
+	// HARVEST THE REPRODUCERS BEFORE ANYTHING ELSE LOOKS AT THE COUNTS.
+	//
+	// libFuzzer writes artifacts to -artifact_prefix=/out/, and /out is the
+	// overlay whose upper layer is per-run scratch that the NEXT run of this
+	// target deletes. So a reproducer was written to a directory designed to
+	// be thrown away, and ArtifactsTo counted artifacts/<target>/, which the
+	// fuzzer never writes to -- meaning every run reported "artifacts +0"
+	// however many crashes it found. On the campaign that caught this, six
+	// reproducers were sitting in scratch while the series said zero across
+	// 103 slices.
+	//
+	// Moved, not copied, and before the counts are taken.
+	res.Harvested = harvest(filepath.Join(rundir, "upper"), arts)
+	res.ArtifactsFrom = artsBefore
+	res.ArtifactsTo = countArtifacts(arts)
 	if ee, ok := runErr.(*exec.ExitError); ok {
 		res.ExitCode = ee.ExitCode()
 	}
@@ -289,4 +308,56 @@ func Sweep(ctx context.Context, sr SweepRequest) ([]Result, error) {
 		out = append(out, res)
 	}
 	return out, nil
+}
+
+// artifactPrefixes are what libFuzzer names a saved input, by kind.
+var artifactPrefixes = []string{"crash-", "leak-", "timeout-", "oom-"}
+
+// harvest moves libFuzzer's saved inputs out of the run's scratch overlay and
+// into the workspace's artifacts directory, where everything else looks for
+// them. Returns how many it moved.
+//
+// Top level only: the overlay's upper layer also contains run_fuzzer's
+// <target>_<engine>_<sanitizer>_out directory and whatever else the container
+// touched under /out, none of which is evidence.
+func harvest(upper, arts string) int {
+	ents, err := os.ReadDir(upper)
+	if err != nil {
+		return 0
+	}
+	moved := 0
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		keep := false
+		for _, p := range artifactPrefixes {
+			if strings.HasPrefix(e.Name(), p) {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			continue
+		}
+		from := filepath.Join(upper, e.Name())
+		to := filepath.Join(arts, e.Name())
+		if _, err := os.Stat(to); err == nil {
+			os.Remove(from) // already harvested by an earlier run
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			// Across devices, or a permission the container left behind:
+			// copy rather than lose it.
+			if b, rerr := os.ReadFile(from); rerr == nil {
+				if os.WriteFile(to, b, 0o644) == nil {
+					os.Remove(from)
+					moved++
+				}
+			}
+			continue
+		}
+		moved++
+	}
+	return moved
 }

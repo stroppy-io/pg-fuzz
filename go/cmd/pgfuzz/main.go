@@ -582,6 +582,24 @@ func cmdBuild(argv []string) int {
 		}
 	}
 
+	// The workspace's own patch series, against the export, before anything
+	// else touches it. A workspace that declares patches and builds without
+	// them produces a tree that everything downstream labels "patched".
+	if list := conf.Get("patch"); list != "" {
+		fmt.Fprintf(os.Stderr, "==> applying the workspace patch series\n")
+		applied, err := build.ApplyPatches(src, strings.Fields(list), os.Stderr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		// Recorded, because workspace.conf's patch_applied= is what the
+		// inventory hashes into the fingerprint. Left unwritten it asserts
+		// patches that are not in the binary.
+		if err := workspace.Set(dir, "patch_applied", strings.Join(applied, " ")); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: recording patch_applied: %v\n", err)
+		}
+	}
+
 	// The workspace's own plugins, into the source export where build.sh
 	// looks for them. A workspace that names none is the common case and
 	// costs nothing; one that names twelve must not build without them.
