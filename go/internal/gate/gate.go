@@ -16,6 +16,7 @@ package gate
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"pgfuzz/internal/logs"
 )
@@ -39,7 +40,15 @@ func (v Verdict) String() string {
 // The floor is deliberately blunt. A target that ran 192 inputs when it has
 // run 264,893 is not slow, it is broken -- and the two are indistinguishable
 // from a report that only prints the number.
-func Starvation(s logs.Stats, floor int) Verdict {
+// Starvation fails a target that did not really fuzz.
+//
+// ACKS are a parameter because a floor nobody can acknowledge is a floor
+// people learn to ignore. A target below the floor with a written-down reason
+// is reported as known and does not fail the round; the reason travels with
+// it so the verdict can be argued with rather than merely suppressed. An
+// acknowledgement older than StaleAck is still honoured but reported, because
+// a cause that was true a month ago may have been fixed since.
+func Starvation(s logs.Stats, floor int, acks map[string]string) Verdict {
 	v := Verdict{Name: "starvation"}
 	if s.Execs == 0 && s.Done == 0 {
 		// No numbers at all is not a pass. A log that could not be read says
@@ -50,9 +59,20 @@ func Starvation(s logs.Stats, floor int) Verdict {
 		return v
 	}
 	if s.Execs < floor {
-		v.Failed = true
-		v.Detail = append(v.Detail,
-			fmt.Sprintf("%s: %d executions, floor %d", s.Target, s.Execs, floor))
+		if row, ok := acks[s.Target]; ok {
+			v.Detail = append(v.Detail, fmt.Sprintf(
+				"%s: %d executions, floor %d -- known: %s",
+				s.Target, s.Execs, floor, ackReason(row)))
+			if d, ok := ackAge(row); ok && d > StaleAck {
+				v.Detail = append(v.Detail, fmt.Sprintf(
+					"%s: the acknowledgement is %d days old -- re-check the cause",
+					s.Target, int(d.Hours()/24)))
+			}
+		} else {
+			v.Failed = true
+			v.Detail = append(v.Detail,
+				fmt.Sprintf("%s: %d executions, floor %d", s.Target, s.Execs, floor))
+		}
 	}
 	if s.ReplayOnly() {
 		v.Failed = true
@@ -178,4 +198,34 @@ func RoundComplete(swept, built []string) Verdict {
 			"a short round is an untested cell that reads like a clean one")
 	}
 	return v
+}
+
+// StaleAck is how old an acknowledgement may be before it is reported.
+//
+// Thirty days, the same window the shell used. It does not withdraw the
+// acknowledgement -- silently un-suppressing a target is how a gate starts
+// crying wolf -- it says the reason is due for review.
+const StaleAck = 30 * 24 * time.Hour
+
+// ackReason is the second tab-separated column of a known-starved row:
+// target, reason, findings-ref, date.
+func ackReason(row string) string {
+	f := strings.Split(row, "\t")
+	if len(f) >= 2 && strings.TrimSpace(f[1]) != "" {
+		return strings.TrimSpace(f[1])
+	}
+	return "no reason recorded"
+}
+
+// ackAge is how long ago the row was acknowledged, from its fourth column.
+func ackAge(row string) (time.Duration, bool) {
+	f := strings.Split(row, "\t")
+	if len(f) < 4 {
+		return 0, false
+	}
+	d, err := time.Parse("2006-01-02", strings.TrimSpace(f[3]))
+	if err != nil {
+		return 0, false
+	}
+	return time.Since(d), true
 }

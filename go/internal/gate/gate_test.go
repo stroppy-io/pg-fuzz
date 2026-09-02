@@ -3,7 +3,9 @@ package gate
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"pgfuzz/internal/logs"
 )
@@ -11,7 +13,7 @@ import (
 func TestSilenceIsNotAPass(t *testing.T) {
 	// A log that yielded nothing says nothing about the run. Treating that as
 	// health is how four dead targets survived a whole campaign.
-	if v := Starvation(logs.Stats{Target: "x"}, 10000); !v.Failed {
+	if v := Starvation(logs.Stats{Target: "x"}, 10000, nil); !v.Failed {
 		t.Error("an empty log must fail the gate, not pass it")
 	}
 }
@@ -78,4 +80,45 @@ func TestUBSanAgainstTheRealBaseline(t *testing.T) {
 		t.Logf("UNACCEPTED: %s", d)
 	}
 	t.Logf("%d logs, %d distinct unaccepted sites", len(hits), len(unaccepted))
+}
+
+// A starvation floor nobody can acknowledge is a floor people learn to
+// ignore. The shell's gate honoured known-starved.tsv; the Go port had no
+// parameter for it at all, so a target with a written-down reason failed the
+// round every round.
+func TestStarvationHonoursAcknowledgements(t *testing.T) {
+	st := logs.Stats{Target: "numeric_fuzzer", Execs: 100, Done: 100, Inited: 1}
+
+	if v := Starvation(st, 100000, nil); !v.Failed {
+		t.Fatal("a target far below its floor must fail when unacknowledged")
+	}
+
+	acks := map[string]string{
+		"numeric_fuzzer": "numeric_fuzzer\tstarved upstream\tFINDINGS/x\t2026-09-01",
+	}
+	v := Starvation(st, 100000, acks)
+	if v.Failed {
+		t.Error("an acknowledged target must not fail the round")
+	}
+	if !strings.Contains(strings.Join(v.Detail, " "), "starved upstream") {
+		t.Errorf("the reason must travel with the verdict, got %v", v.Detail)
+	}
+}
+
+// An acknowledgement is still honoured when it goes stale -- silently
+// un-suppressing a target is how a gate starts crying wolf -- but the age is
+// reported, because a cause that was true a month ago may be fixed.
+func TestStaleAcknowledgementIsReportedNotWithdrawn(t *testing.T) {
+	st := logs.Stats{Target: "numeric_fuzzer", Execs: 100, Done: 100, Inited: 1}
+	old := time.Now().Add(-60 * 24 * time.Hour).Format("2006-01-02")
+	acks := map[string]string{
+		"numeric_fuzzer": "numeric_fuzzer\tstarved upstream\tFINDINGS/x\t" + old,
+	}
+	v := Starvation(st, 100000, acks)
+	if v.Failed {
+		t.Error("a stale acknowledgement must still suppress the failure")
+	}
+	if !strings.Contains(strings.Join(v.Detail, " "), "days old") {
+		t.Errorf("a stale acknowledgement must be reported, got %v", v.Detail)
+	}
 }

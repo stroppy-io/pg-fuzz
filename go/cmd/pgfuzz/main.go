@@ -897,6 +897,12 @@ func cmdGate(argv []string) int {
 		return 2
 	}
 
+	// The same acknowledgement list the ratchet uses. A starvation floor
+	// nobody can acknowledge is a floor people learn to ignore.
+	starveAcks := map[string]string{}
+	if pp, err := profilePaths(r, ""); err == nil {
+		starveAcks, _ = ratchet.LoadAcks(pp.Acks)
+	}
 	built, _ := build.Targets(buildDir(dir, c, r))
 	swept := map[string]bool{}
 	failed := 0
@@ -908,7 +914,7 @@ func cmdGate(argv []string) int {
 		st.Target = targetOf(lg)
 		swept[st.Target] = true
 		for _, v := range []gate.Verdict{
-			gate.Starvation(st, *floor),
+			gate.Starvation(st, *floor, starveAcks),
 			gate.SlowUnits(st),
 			gate.UBSan(st, c.Name, accepted),
 		} {
@@ -2835,6 +2841,12 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 	if len(runLogs) == 0 {
 		return 2
 	}
+	// The same acknowledgement list the ratchet uses. A starvation floor
+	// nobody can acknowledge is a floor people learn to ignore.
+	starveAcks := map[string]string{}
+	if pp, err := profilePaths(r, ""); err == nil {
+		starveAcks, _ = ratchet.LoadAcks(pp.Acks)
+	}
 	for _, lg := range runLogs {
 		st, err := logs.ParseFile(lg)
 		if err != nil {
@@ -2842,7 +2854,7 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 		}
 		st.Target = targetOf(lg)
 		for _, v := range []gate.Verdict{
-			gate.Starvation(st, 10000), gate.SlowUnits(st),
+			gate.Starvation(st, 10000, starveAcks), gate.SlowUnits(st),
 			gate.UBSan(st, c.Name, accepted),
 		} {
 			if v.Failed {
