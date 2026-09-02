@@ -37,6 +37,15 @@ type Plan struct {
 	// the finding: SET TABLESPACE emptying secondary indexes is exactly
 	// "expected 6000 rows, got 0" from a step that changes nothing.
 	ChangesRows bool
+
+	// RowDelta is how much this step changes the count BY, when that is
+	// known exactly. It exists because ChangesRows adopts whatever the server
+	// reports, and for the transactional shapes that is the one thing it must
+	// never do: rollback_insert, savepoint_partial and prepare_2pc are the
+	// only oracle for the undo log, and adopting the post-step count installs
+	// the very corruption they are there to detect. A step that undoes itself
+	// carries no delta at all -- its count must not move.
+	RowDelta int
 }
 
 // PlanStep turns a recorded step into something executable.
@@ -108,7 +117,7 @@ func PlanStep(s Step, sc Scenario) (Plan, bool) {
 			"BEGIN;",
 			stepInsert(tbl, t, rowsOf(tbl)+2000, rowsOf(tbl)+2050, "g"),
 			"ROLLBACK;",
-		}, ChangesRows: true}, true
+		}}, true
 	case "rollback_delete":
 		return Plan{Kind: SQL, SQL: []string{
 			"BEGIN;", f("DELETE FROM %s;", t), "ROLLBACK;",
@@ -125,14 +134,14 @@ func PlanStep(s Step, sc Scenario) (Plan, bool) {
 			f("DELETE FROM %s WHERE i > %d;", t, rowsOf(tbl)+3010),
 			"ROLLBACK TO SAVEPOINT sp;",
 			"COMMIT;",
-		}, ChangesRows: true}, true
+		}, RowDelta: 21}, true
 	case "prepare_2pc":
 		return Plan{Kind: SQL, SQL: []string{
 			"BEGIN;",
 			stepInsert(tbl, t, rowsOf(tbl)+4000, rowsOf(tbl)+4010, "g"),
 			f("PREPARE TRANSACTION 'p_%s';", t),
 			f("COMMIT PREPARED 'p_%s';", t),
-		}, ChangesRows: true}, true
+		}, RowDelta: 11}, true
 	case "serializable_write":
 		return Plan{Kind: SQL, SQL: []string{
 			"BEGIN ISOLATION LEVEL SERIALIZABLE;",

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"pgfuzz/internal/scenario"
@@ -147,10 +148,20 @@ func Scenario(argv []string) int {
 				return fail(st.Op + ": server did not come back: " + err.Error())
 			}
 		}
-		if p.ChangesRows && st.Table != "" {
-			// This step is SUPPOSED to move the count, so adopt the new one.
-			// Comparing against the load forever made insert_more and
-			// delete_half "fail" every scenario they appeared in.
+		switch {
+		case p.RowDelta != 0 && st.Table != "":
+			// A KNOWN delta is predicted, never adopted. These are the steps
+			// whose whole purpose is that the count lands on a number we can
+			// state in advance; asking the server what it thinks would make
+			// the oracle agree with any answer it gave.
+			if n, err := strconv.Atoi(strings.TrimSpace(expect[st.Table])); err == nil {
+				expect[st.Table] = strconv.Itoa(n + p.RowDelta)
+			}
+		case p.ChangesRows && st.Table != "":
+			// This step is SUPPOSED to move the count by an amount we do not
+			// model, so adopt the new one. Comparing against the load forever
+			// made insert_more and delete_half "fail" every scenario they
+			// appeared in.
 			if out, err := srv.SQL("/out", db, []string{"SELECT count(*) FROM " + st.Table + ";"}); err == nil {
 				expect[st.Table] = strings.TrimSpace(out)
 			}

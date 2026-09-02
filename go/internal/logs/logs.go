@@ -33,7 +33,7 @@ type Stats struct {
 	Target      string
 	Inited      int // executions when corpus replay finished
 	Done        int // executions when the run finished
-	Execs       int // stat::number_of_executed_units
+	Execs       int // executions: "Done N runs" summed, else the stat:: sum
 	NewUnits    int // stat::new_units_added
 	SlowestUnit int // stat::slowest_unit_time_sec
 	PeakRSS     int
@@ -52,6 +52,12 @@ type Stats struct {
 	// the watchdog has to stop are exactly the ones with no rate, and their
 	// floors become unverifiable.
 	avgRate int
+
+	// statExecs is the stat:: sum, kept apart from Execs because on an ASan
+	// build it is printed TWICE per job -- LeakSanitizer reports at exit and
+	// the block repeats -- so 16 jobs produce 32 blocks and the naive sum is
+	// exactly 2x. It is the fallback, never the first choice.
+	statExecs int
 }
 
 // UBSite is one UndefinedBehaviorSanitizer report.
@@ -105,7 +111,7 @@ func Parse(r io.Reader) Stats {
 			n, _ := strconv.Atoi(m[2])
 			switch m[1] {
 			case "number_of_executed_units":
-				s.Execs += n
+				s.statExecs += n
 			case "new_units_added":
 				s.NewUnits += n
 			case "slowest_unit_time_sec":
@@ -181,8 +187,22 @@ func Parse(r io.Reader) Stats {
 			s.Crashes = append(s.Crashes, "Assert("+m[1]+")")
 		}
 	}
-	// "Done N runs in M second" is PREFERRED: it is the target's own report of
-	// a completed run. average_exec_per_sec is the fallback.
+	// EXECUTIONS COME FROM "Done N runs" WHEN THERE IS ONE.
+	//
+	// It is the target's own report of a completed run, one line per worker.
+	// stat::number_of_executed_units looks equivalent and is not: on an ASan
+	// build the stat block is emitted twice per job, so summing it doubles
+	// every -add figure -- and that figure feeds the series, the ratchet floors
+	// and the starvation gate. The old driver summed Done first for exactly
+	// this reason and said so; the port summed stat:: unconditionally.
+	if s.Runs > 0 {
+		s.Execs = s.Runs
+	} else {
+		s.Execs = s.statExecs
+	}
+
+	// "Done N runs in M second" is PREFERRED for the rate too: it is the
+	// target's own report. average_exec_per_sec is the fallback.
 	if s.Seconds > 0 && s.Runs > 0 {
 		s.Rate = math.Round(float64(s.Runs)/float64(s.Seconds)*100) / 100
 	} else if s.avgRate > 0 {

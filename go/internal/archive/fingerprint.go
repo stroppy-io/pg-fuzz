@@ -169,13 +169,23 @@ func Fingerprint(in FingerprintInputs) (string, error) {
 		}
 	}
 
-	// The harness sources, concatenated in name order.
+	// The harness sources: every .c in name order, THEN every .h in name
+	// order. Not both sorted together.
+	//
+	// This is a byte order, not a preference. The shell that defined
+	// fp_version 2 did `cat *.c *.h`, and interleaving them by name produces a
+	// different hash from an identical configuration -- measured on this tree
+	// as 727caf6084149396 against 519649742286e65a. The next archive would
+	// then flag "something underneath moved" over a run where nothing did,
+	// which is the exact false alarm fp_version exists to prevent. Changing
+	// the order requires bumping FPVersion, and bumping it makes every
+	// existing archive incomparable, so the order stays.
 	var srcs []string
 	for _, pat := range []string{"*.c", "*.h"} {
 		m, _ := filepath.Glob(filepath.Join(in.Repo, "project", "fuzzer", pat))
+		sort.Strings(m)
 		srcs = append(srcs, m...)
 	}
-	sort.Strings(srcs)
 	for _, p := range srcs {
 		f, err := os.Open(p)
 		if err != nil {
@@ -201,12 +211,13 @@ func Fingerprint(in FingerprintInputs) (string, error) {
 // rebuild, and coverage taken either side is not comparable.
 func HarnessHash(repo string) string {
 	h := sha256.New()
+	// Same byte order as the fingerprint: all .c, then all .h. See Fingerprint.
 	var srcs []string
 	for _, pat := range []string{"*.c", "*.h"} {
 		m, _ := filepath.Glob(filepath.Join(repo, "project", "fuzzer", pat))
+		sort.Strings(m)
 		srcs = append(srcs, m...)
 	}
-	sort.Strings(srcs)
 	for _, p := range srcs {
 		if f, err := os.Open(p); err == nil {
 			io.Copy(h, f)

@@ -3600,6 +3600,16 @@ func corpusAutocap(wsDir, ws, bdir, root, logPath string,
 			fmt.Printf("  %-22s ERROR %v\n", d.Target, err)
 			continue
 		}
+		// A SKIPPED MINIMISE IS NOT A REMOVAL. Minimize returns early with
+		// After == 0 when there is no corpus dir, no binary in the build, or
+		// an empty corpus -- so `d.Live - res.After` reported the ENTIRE live
+		// corpus as archived. That row is then read back by plateau.Credited
+		// and added to corpus growth, so one skipped target permanently
+		// inflated the plateau baseline.
+		if res.Skipped != "" {
+			fmt.Printf("  %-22s skipped: %s\n", d.Target, res.Skipped)
+			continue
+		}
 		n := d.Live - res.After
 		if n <= 0 {
 			continue

@@ -185,9 +185,19 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 		if err := c.Series.Append(Slice{
 			RunID: c.RunID, Round: round, Workspace: e.Name, Target: t,
 			Started: time.Now().UTC().Format(time.RFC3339),
-			Seconds: c.PerTarget, Jobs: c.Jobs,
+			// The wall clock the slice TOOK, not the budget it was allowed.
+			// A slice killed at 8 minutes and one that ran its full 45
+			// seconds are different facts.
+			Seconds: int(r.Elapsed.Seconds()), Jobs: c.Jobs,
 			Execs: st.Execs, NewUnits: st.NewUnits,
 			Cov: st.Cov, Ft: st.Ft, Corpus: r.CorpusTo,
+			// BOTH ends, and this is not symmetry for its own sake. The
+			// funnel types corpus_before as a pointer precisely so "absent"
+			// and "zero" stay apart -- reading absent as zero says a
+			// fifteen-second slice created the entire corpus from nothing.
+			// Omitting the field emitted a literal 0, which unmarshals to a
+			// NON-nil pointer and defeats that guard exactly.
+			CorpusBefore: r.CorpusFrom,
 			// The slice's OWN artifacts, not the directory's total. The
 			// total is weeks of accumulation and would read as this run's
 			// output on every dashboard that shows it.

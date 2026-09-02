@@ -81,6 +81,15 @@ func Union(ctx context.Context, r UnionRequest) (Summary, error) {
 		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
 	}
+	// WIPED, not just created. The container globs /stage/*.profdata, and the
+	// previous run left its own union.profdata there -- so without this every
+	// union re-merges the last one plus any target profile that is no longer
+	// newest. The number can then only ever go up, which makes a coverage
+	// regression unreportable, and "newest per target" silently becomes
+	// "everything this workspace ever measured".
+	if err := os.RemoveAll(r.Stage); err != nil {
+		return Summary{}, err
+	}
 	if err := os.MkdirAll(r.Stage, 0o755); err != nil {
 		return Summary{}, err
 	}

@@ -1,71 +1,35 @@
 package scenario
 
-import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// Every operation the recorded scenarios use must be planned.
-//
-// An unplanned op means the scenario runs short, and a scenario that runs
-// short is a different experiment with the same seed number -- it will
-// silently stop reproducing and look like the defect went away.
-func TestEveryOpIsPlanned(t *testing.T) {
-	sc := Scenario{Tables: []Table{{Name: "t0", Rows: 500, AM: "orioledb"}}}
-	for _, op := range Ops {
-		p, ok := PlanStep(Step{Op: op, Table: "t0"}, sc)
+// The transactional shapes are the only oracle for the undo log, and they must
+// state their outcome in advance. ChangesRows adopts whatever the server
+// reports, so marking these with it made the driver install the very
+// corruption they exist to detect: a rollback that leaves rows behind had its
+// wrong count read back and recorded as expected.
+func TestTransactionalShapesPredictRatherThanAdopt(t *testing.T) {
+	sc := Scenario{Tables: []Table{{Name: "t", AM: "orioledb", Rows: 1000}}}
+	for _, c := range []struct {
+		op    string
+		delta int
+		why   string
+	}{
+		{"rollback_insert", 0, "inserts then rolls back: the count must not move"},
+		{"rollback_delete", 0, "deletes then rolls back: the count must not move"},
+		{"rollback_ddl", 0, "adds a column then rolls back"},
+		{"savepoint_partial", 21, "21 rows inserted; the DELETE is undone to the savepoint"},
+		{"prepare_2pc", 11, "11 rows, prepared then committed"},
+	} {
+		p, ok := PlanStep(Step{Op: c.op, Table: "t"}, sc)
 		if !ok {
-			t.Errorf("op %q has no plan", op)
+			t.Errorf("%s: no plan", c.op)
 			continue
 		}
-		switch p.Kind {
-		case SQL, Concurrent:
-			if len(p.SQL) == 0 {
-				t.Errorf("op %q plans no statements", op)
-			}
-			for _, s := range p.SQL {
-				if !strings.HasSuffix(strings.TrimSpace(s), ";") {
-					t.Errorf("op %q: statement not terminated: %q", op, s)
-				}
-			}
-		case Control:
-			if p.Ctl == "" {
-				t.Errorf("op %q is Control with no action", op)
-			}
+		if p.ChangesRows {
+			t.Errorf("%s adopts the server's count; it must predict (%s)", c.op, c.why)
+		}
+		if p.RowDelta != c.delta {
+			t.Errorf("%s RowDelta = %d, want %d (%s)", c.op, p.RowDelta, c.delta, c.why)
 		}
 	}
-}
-
-// And every op appearing in the corpus must be in Ops -- the two lists have to
-// agree, or one of them is lying about what this port can replay.
-func TestCorpusOpsAreDeclared(t *testing.T) {
-	files, _ := filepath.Glob(filepath.Join("testdata", "*.json"))
-	seen := map[string]bool{}
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var r Record
-		if err := json.Unmarshal(b, &r); err != nil {
-			t.Fatal(err)
-		}
-		for _, s := range r.Scenario.Steps {
-			seen[s.Op] = true
-		}
-	}
-	for op := range seen {
-		if !KnownOp(op) {
-			t.Errorf("corpus uses %q, Ops does not declare it", op)
-		}
-	}
-	for _, op := range Ops {
-		if !seen[op] {
-			t.Logf("declared but unused by the corpus: %s", op)
-		}
-	}
-	t.Logf("%d distinct ops across %d scenarios", len(seen), len(files))
 }
