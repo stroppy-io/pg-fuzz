@@ -94,7 +94,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz triage -w <ws> -t <target> -verdict V <artifact>
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
-  pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE]
+  pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D]
   pgfuzz clone <slug>|<path> <dest>
   pgfuzz reown [-w <ws>] [-all] [-n] [<path>...]
   pgfuzz repro -w <workspace> -t <target> <input>
@@ -857,6 +857,7 @@ func cmdGate(argv []string) int {
 	ws := fs.String("w", "", "workspace")
 	floor := fs.Int("floor", 10000, "executions below this is starvation")
 	baseline := fs.String("baseline", "", "ubsan accept-list (default: the repo's)")
+	since := fs.Duration("since", 0, "only judge logs written within this window")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil || *ws == "" {
 		fs.Usage()
@@ -890,7 +891,33 @@ func cmdGate(argv []string) int {
 	// reported "no executed-unit count" for 24 targets on a workspace that had
 	// just executed 33.9 million inputs. The gate then failed the round on the
 	// history rather than on the run.
-	runLogs := newestPerTarget(gatherRunLogs(dir))
+	// SCOPED, or it says it is not.
+	//
+	// RoundComplete asks "did every built target run", and handing it the
+	// newest log per target with no time bound answers a different question:
+	// a target that last ran a week ago counts as swept, so the gate written
+	// to catch a short round passes every short round. The old check carried
+	// an explicit --since because round numbers restart and a shorter
+	// campaign leaves the previous one's logs in place.
+	all := gatherRunLogs(dir)
+	runLogs := newestPerTarget(all)
+	if *since > 0 {
+		cut := time.Now().Add(-*since)
+		var recent []string
+		for _, lg := range runLogs {
+			if fi, err := os.Stat(lg); err == nil && fi.ModTime().After(cut) {
+				recent = append(recent, lg)
+			}
+		}
+		fmt.Printf("  judging %d of %d target log(s) written in the last %s\n",
+			len(recent), len(runLogs), *since)
+		runLogs = recent
+	} else {
+		// Said out loud rather than assumed. An unscoped verdict is still
+		// worth having; believing it is a verdict on THIS round is not.
+		fmt.Printf("  judging every target's newest log, of any age" +
+			" -- pass -since to scope this to one round\n")
+	}
 	if len(runLogs) == 0 {
 		// NOT a pass. A gate with nothing to read has checked nothing, and
 		// that is not the same as finding nothing wrong.
