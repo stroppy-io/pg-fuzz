@@ -20,6 +20,7 @@ package logs
 
 import (
 	"bufio"
+	"compress/gzip"
 	"io"
 	"math"
 	"os"
@@ -212,13 +213,32 @@ func Parse(r io.Reader) Stats {
 }
 
 // ParseFile reads a log from disk.
+// ParseFile reads one run log, gzipped or not.
+//
+// GZIPPED OR NOT is the substance. `pgfuzz tidy` compresses any log over 10 MB
+// older than an hour, including the ones the runner writes -- and this read
+// only plain files, so tidying a workspace silently blinded the ratchet, the
+// starvation gate and the round-completeness gate at once. On the machine this
+// was found on there were 113,705 .log.gz against 425 .log. The sweep parser
+// already handled both; this half did not, and tidy's own header asserted that
+// it did.
 func ParseFile(path string) (Stats, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Stats{}, err
 	}
 	defer f.Close()
-	return Parse(f), nil
+
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		zr, err := gzip.NewReader(f)
+		if err != nil {
+			return Stats{}, err
+		}
+		defer zr.Close()
+		r = zr
+	}
+	return Parse(r), nil
 }
 
 // ReplayOnly reports whether the slice spent its budget re-running its corpus.

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1869,7 +1870,7 @@ func cmdCensus(argv []string) int {
 			if !e.IsDir() {
 				continue
 			}
-			if m, _ := filepath.Glob(filepath.Join(r.WS, e.Name(), "soak-*_fuzzer.log")); len(m) > 0 {
+			if m := gatherRunLogs(filepath.Join(r.WS, e.Name())); len(m) > 0 {
 				wss = append(wss, e.Name())
 			}
 		}
@@ -1893,7 +1894,9 @@ func cmdCensus(argv []string) int {
 		// artifacts/<target>/run-*.log) and one per round holding all of them
 		// (the matrix driver's sweep-round*.log).
 		for _, pat := range []string{
-			"soak-*_fuzzer.log", "artifacts/*/run-*.log", "sweep-round*.log",
+			"soak-*_fuzzer.log", "soak-*_fuzzer.log.gz",
+			"artifacts/*/run-*.log", "artifacts/*/run-*.log.gz",
+			"sweep-round*.log", "sweep-round*.log.gz",
 		} {
 			m, _ := filepath.Glob(filepath.Join(dir, pat))
 			files = append(files, m...)
@@ -1904,22 +1907,25 @@ func cmdCensus(argv []string) int {
 					continue
 				}
 			}
-			f, err := os.Open(p)
+			f, rc, err := openMaybeGzip(p)
 			if err != nil {
 				continue
 			}
 			// Streamed: these logs run to gigabytes and reading one whole is
 			// how a census becomes an out-of-memory kill.
 			if strings.HasPrefix(filepath.Base(p), "sweep-round") {
-				err = b.AddReader(ws, f)
+				err = b.AddReader(ws, rc)
 			} else {
-				err = b.AddReaderAs(ws, targetOf(p), f)
+				err = b.AddReaderAs(ws, targetOf(p), rc)
 			}
-			f.Close()
+			closeAll(rc, f)
 			// Executed units, from the same file. A signature list cannot say
 			// whether a silent target was quiet or dead.
-			if raw, e := os.ReadFile(p); e == nil {
-				b.CountUnits(ws, targetOf(p), string(raw))
+			if f2, rc2, e := openMaybeGzip(p); e == nil {
+				if raw, e := io.ReadAll(rc2); e == nil {
+					b.CountUnits(ws, targetOf(p), string(raw))
+				}
+				closeAll(rc2, f2)
 			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "pgfuzz: %s: %v\n", filepath.Base(p), err)
@@ -2845,7 +2851,7 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 		baselinePath = filepath.Join(home, "scripts", "ubsan-baseline.tsv")
 	}
 	accepted, _ := gate.LoadAccepted(baselinePath)
-	runLogs, _ := filepath.Glob(filepath.Join(dir, "artifacts", "*", "run-*.log"))
+	runLogs := gatherRunLogs(dir)
 	if len(runLogs) == 0 {
 		return 2
 	}
@@ -2876,7 +2882,10 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 func addWorkspaceLogs(b *census.Builder, r paths.Roots, ws string) int {
 	dir := filepath.Join(r.WS, ws)
 	var n int
-	for _, pat := range []string{"soak-*_fuzzer.log", "artifacts/*/run-*.log", "sweep-round*.log"} {
+	for _, pat := range []string{
+		"soak-*_fuzzer.log", "soak-*_fuzzer.log.gz",
+		"artifacts/*/run-*.log", "artifacts/*/run-*.log.gz",
+		"sweep-round*.log", "sweep-round*.log.gz"} {
 		hits, _ := filepath.Glob(filepath.Join(dir, pat))
 		for _, p := range hits {
 			f, err := os.Open(p)
@@ -3833,10 +3842,22 @@ func newest(paths []string) time.Time {
 // them and summing would report a slice as having executed everything the
 // target did since the workspace was created.
 // gatherRunLogs finds a workspace's per-target logs in either layout.
+// gatherRunLogs finds the per-target run logs, COMPRESSED OR NOT.
+//
+// `pgfuzz tidy` gzips these, so a glob for *.log alone means tidying a
+// workspace silently empties every gate that reads them -- and an empty gate
+// exits 0.
 func gatherRunLogs(dir string) []string {
-	out, _ := filepath.Glob(filepath.Join(dir, "artifacts", "*", "run-*.log"))
+	var out []string
+	for _, pat := range []string{"run-*.log", "run-*.log.gz"} {
+		m, _ := filepath.Glob(filepath.Join(dir, "artifacts", "*", pat))
+		out = append(out, m...)
+	}
 	if len(out) == 0 {
-		out, _ = filepath.Glob(filepath.Join(dir, "soak-*_fuzzer.log"))
+		for _, pat := range []string{"soak-*_fuzzer.log", "soak-*_fuzzer.log.gz"} {
+			m, _ := filepath.Glob(filepath.Join(dir, pat))
+			out = append(out, m...)
+		}
 	}
 	return out
 }
@@ -4440,4 +4461,32 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, complete b
 		fmt.Fprintf(os.Stderr, "  !! %s REGRESSED in round %d\n", e.Name, round)
 	}
 	run("ratchet update", "ratchet", "-w", e.Dir, "-update", "-jobs", j)
+}
+
+// openMaybeGzip opens a log that may or may not be compressed.
+//
+// `pgfuzz tidy` gzips run logs over 10 MB, so anything that reads one has to
+// cope with both -- reading only plain files is how tidying a workspace
+// silently emptied the census.
+func openMaybeGzip(path string) (*os.File, io.Reader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !strings.HasSuffix(path, ".gz") {
+		return f, f, nil
+	}
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return f, zr, nil
+}
+
+func closeAll(r io.Reader, f *os.File) {
+	if c, ok := r.(io.Closer); ok && r != io.Reader(f) {
+		c.Close()
+	}
+	f.Close()
 }
