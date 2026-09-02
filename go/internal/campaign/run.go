@@ -37,6 +37,21 @@ type Config struct {
 	Series     Series
 	Out        io.Writer
 
+	// AfterSweep runs the gates after each workspace finishes a sweep, and it
+	// is a hook rather than a call because campaign must not import ratchet.
+	//
+	// It exists because the port lost the gating entirely. The shell spliced
+	// `ratchet check` then `ratchet update` into every workspace-round, in
+	// that order, with the reason stated: updating first raises the floor to
+	// include the very round being judged, so the round can never regress.
+	// Without a caller the ratchet was a gate nobody ran -- floors never rose
+	// and no regression was ever detected unless a human typed the command.
+	//
+	// SKIPPED WHEN THE SWEEP WAS CUT SHORT. Bounding the clock must not
+	// manufacture findings: a workspace that only got through six of its
+	// targets has not earned a verdict on the other seventeen.
+	AfterSweep func(e Entry, round int, complete bool)
+
 	// Productivity is ws -> target -> newest new_units, from the ratchet
 	// series. Empty means "order by rotation alone", which is what happens
 	// before a workspace has any history.
@@ -234,11 +249,15 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 	if err != nil {
 		say("  %s: %v", e.Name, err)
 	}
-	if len(res) < len(e.Targets) {
+	complete := len(res) >= len(e.Targets)
+	if !complete {
 		// Recorded as a fact, not left to be inferred from a log: a round that
 		// ran 20 of 23 writes 20 healthy results and passes every gate that
 		// judges only what it was handed.
 		say("  SHORT ROUND: %d of %d targets never ran", len(e.Targets)-len(res), len(e.Targets))
+	}
+	if c.AfterSweep != nil {
+		c.AfterSweep(e, round, complete)
 	}
 }
 

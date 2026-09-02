@@ -1146,6 +1146,14 @@ func cmdCampaign(argv []string) int {
 		// From the RATCHET series, which is where new_units lives. A workspace
 		// with no history contributes nothing and falls back to rotation.
 		Productivity: productivity(r, entries),
+		// THE GATES RUN, and they run in this order. The shell spliced
+		// `ratchet check` then `ratchet update` into every workspace-round and
+		// said why: updating first raises the floor to include the round being
+		// judged, so nothing can ever regress. Without a caller the ratchet was
+		// a gate nobody ran.
+		AfterSweep: func(e campaign.Entry, round int, complete bool) {
+			gateAfterSweep(r, e, round, *jobs, complete)
+		},
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
@@ -4392,4 +4400,44 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+// gateAfterSweep judges one workspace's round, then raises its floors.
+//
+// CHECK BEFORE UPDATE, always. Updating first folds the round being judged
+// into the floor it is judged against, which makes a regression arithmetically
+// impossible -- the gate would pass forever and say nothing.
+//
+// A SHORT ROUND IS NOT JUDGED. Bounding the clock must not manufacture
+// findings: a workspace that got through six of its targets has not earned a
+// verdict on the other seventeen. The floors are not raised either, since a
+// partial round is not evidence that a higher floor is sustainable.
+func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, complete bool) {
+	if !complete {
+		fmt.Fprintf(os.Stderr, "  gates skipped: the sweep was cut short\n")
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	run := func(what string, args ...string) int {
+		cmd := exec.Command(self, args...)
+		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+		if err := cmd.Run(); err != nil {
+			if ee, ok := err.(*exec.ExitError); ok {
+				return ee.ExitCode()
+			}
+			fmt.Fprintf(os.Stderr, "  %s: %v\n", what, err)
+			return -1
+		}
+		return 0
+	}
+	j := strconv.Itoa(jobs)
+	if code := run("ratchet check", "ratchet", "-w", e.Dir, "-jobs", j); code == 1 {
+		// Reported, not fatal. The campaign's job is to keep fuzzing; the
+		// regression is a fact about this round and the series records it.
+		fmt.Fprintf(os.Stderr, "  !! %s REGRESSED in round %d\n", e.Name, round)
+	}
+	run("ratchet update", "ratchet", "-w", e.Dir, "-update", "-jobs", j)
 }
