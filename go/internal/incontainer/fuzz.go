@@ -70,7 +70,7 @@ func handBack(dirs ...string) {
 		if _, err := os.Stat(d); err != nil {
 			continue
 		}
-		if n, err := Chown(d, uid, gid); err != nil || n > 0 {
+		if n, err := Chown(d, uid, gid, true); err != nil || n > 0 {
 			fmt.Fprintf(os.Stderr, "_fuzz: handing back %s: %d entries failed\n", d, n)
 		}
 	}

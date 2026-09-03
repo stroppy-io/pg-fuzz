@@ -19,10 +19,12 @@ import (
 // failure and says nothing about the rest, and a partial repair that reports
 // success is exactly how the unreadable-corpus bug hid the first time.
 func Own(argv []string) int {
-	if len(argv) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: _own <dir> <uid> <gid>")
+	if len(argv) < 3 || len(argv) > 4 {
+		fmt.Fprintln(os.Stderr, "usage: _own <dir> <uid> <gid> [own-only]")
 		return 2
 	}
+	// own-only: chown, and never widen group/other. See Chown.
+	widen := len(argv) == 3
 	uid, err1 := strconv.Atoi(argv[1])
 	gid, err2 := strconv.Atoi(argv[2])
 	if err1 != nil || err2 != nil {
@@ -30,7 +32,7 @@ func Own(argv []string) int {
 		return 2
 	}
 
-	failed, err := Chown(argv[0], uid, gid)
+	failed, err := Chown(argv[0], uid, gid, widen)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "_own: %v\n", err)
 		return 1
@@ -48,7 +50,22 @@ func Own(argv []string) int {
 // Errors are per-entry and counted rather than fatal: `chown -R` stops at the
 // first failure and says nothing about the rest, and a partial repair that
 // reports success is exactly how the unreadable-corpus bug hid the first time.
-func Chown(root string, uid, gid int) (failed int, err error) {
+// WIDEN is the difference between a corpus and a build, and getting it wrong
+// silently killed five fuzz targets.
+//
+// For a corpus, `go+rX` is the point: the unreadable-corpus bug was files the
+// host user could not open. For a BUILD it is a defect. PostgreSQL refuses to
+// start on a data directory with any other-bits set -- "Permissions should be
+// u=rwx (0700) or u=rwx,g=rx (0750)" -- and $OUT contains the prepared data
+// directory every backend-initialised harness copies. Widening it to 0755 made
+// protocol_fuzzer, simple_query_fuzzer, spi_query_fuzzer, backend_types_fuzzer
+// and extension_funcs_fuzzer FATAL at startup, so a two-hour campaign across
+// five majors executed nothing at all in five of its twenty-three targets
+// while every other number looked healthy.
+//
+// With widen false this only ever ADDS owner access. It never touches group or
+// other, so a 0700 data directory stays 0700.
+func Chown(root string, uid, gid int, widen bool) (failed int, err error) {
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "_own: %v\n", err)
@@ -67,11 +84,27 @@ func Chown(root string, uid, gid int) (failed int, err error) {
 		// as "directories" alone is wrong and silently disarms a build: the
 		// fuzz targets under /out are exactly the already-executable files,
 		// and 0644 makes every one of them unrunnable.
-		mode := fs.FileMode(0o644)
-		if d.IsDir() {
-			mode = 0o755
-		} else if info, err := d.Info(); err == nil && info.Mode().Perm()&0o111 != 0 {
-			mode = 0o755
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		cur := info.Mode().Perm()
+		var mode fs.FileMode
+		if widen {
+			// u+rwX,go+rX
+			mode = 0o644
+			if d.IsDir() || cur&0o111 != 0 {
+				mode = 0o755
+			}
+		} else {
+			// u+rwX only: add owner access, preserve everything else.
+			mode = cur | 0o600
+			if d.IsDir() || cur&0o111 != 0 {
+				mode |= 0o100
+			}
+			if mode == cur {
+				return nil
+			}
 		}
 		if err := os.Chmod(p, mode); err != nil {
 			fmt.Fprintf(os.Stderr, "_own: chmod %s: %v\n", p, err)

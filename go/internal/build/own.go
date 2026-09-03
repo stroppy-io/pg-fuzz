@@ -46,7 +46,10 @@ func Reown(ctx context.Context, image, outDir string) error {
 		"-v", outDir+":/out",
 		"-v", self+":/pgfuzz:ro",
 		"--entrypoint", "/pgfuzz",
-		image, "_own", "/out", fmt.Sprint(uid), fmt.Sprint(gid))
+		// own-only: never widen group/other. $OUT holds the prepared
+		// PostgreSQL data directory, and PostgreSQL refuses to start on one
+		// with other-bits set.
+		image, "_own", "/out", fmt.Sprint(uid), fmt.Sprint(gid), "own-only")
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	if err := cmd.Run(); err != nil {
