@@ -2268,7 +2268,21 @@ func cmdCorpus(argv []string) int {
 	}
 
 	if *seedFromSrc != "" {
-		n, err := seedcorpus.Generate(*seedFromSrc, root, *extraGlobs, os.Stdout)
+		// THE WORKSPACE'S OWN GLOBS, when the flag does not override them.
+		//
+		// corpus_globs= was the fourth config key the port recorded and never
+		// read -- after plugins=, patch= and preload=. It exists because a
+		// workspace can fuzz a 265-file patch for eleven hours and touch none
+		// of it: the patch ships its own regression SQL, and without that SQL
+		// in the seed corpus nothing ever reaches the code it added.
+		globs := *extraGlobs
+		if globs == "" {
+			globs = c.Get("corpus_globs")
+			if globs != "" {
+				fmt.Printf("  corpus_globs from the workspace: %s\n", globs)
+			}
+		}
+		n, err := seedcorpus.Generate(*seedFromSrc, root, globs, os.Stdout)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
