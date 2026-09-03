@@ -98,6 +98,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
   pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D] [-min-stats P]
+  pgfuzz archive -slug NAME [-no-corpus] [-force]
   pgfuzz breakdown -w <ws> [-json]
   pgfuzz clone <slug>|<path> <dest>
   pgfuzz reown [-w <ws>] [-all] [-n] [<path>...]
@@ -237,6 +238,8 @@ func main() {
 		os.Exit(cmdCensus(os.Args[2:]))
 	case "gate":
 		os.Exit(cmdGate(os.Args[2:]))
+	case "archive":
+		os.Exit(cmdArchive(os.Args[2:]))
 	case "breakdown":
 		os.Exit(cmdBreakdown(os.Args[2:]))
 	case "clone":
