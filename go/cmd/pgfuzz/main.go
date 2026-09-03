@@ -542,8 +542,33 @@ func cmdBuild(argv []string) int {
 
 	// OrioleDB workspaces export a different repository.
 	repoDir := filepath.Join(r.Cache, "postgres")
-	if conf.Get("flavor") == "orioledb" {
+	orioleRepo := filepath.Join(r.Cache, "orioledb")
+	isOriole := conf.Get("flavor") == "orioledb"
+	if isOriole {
 		repoDir = filepath.Join(r.Cache, "orioledb-postgres")
+
+		// A BARE MAJOR IS NOT A BUILDABLE REF. OrioleDB refuses to build
+		// against any patchset commit but its own, so `ref=17` has to be
+		// resolved through the extension's .pgtags -- read out of the resolved
+		// ref rather than off disk, because `git fetch` advances
+		// refs/remotes/origin/main and touches neither the local branch nor
+		// the checkout.
+		//
+		// The port dropped this, so the 23 workspaces here naming ref=16|17|18
+		// simply failed to build. The quieter hazard was one step away:
+		// build.sh keys the whole extension path on
+		// orioledb/orioledb.control existing in the export, so a bare ref that
+		// DID resolve would have produced a fork-without-extension build
+		// indistinguishable from a real OrioleDB one.
+		if source.IsBareMajor(useRef) {
+			pinned, err := source.PatchsetFor(orioleRepo, conf.Get("orioledb_ref"), useRef)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+				return 2
+			}
+			fmt.Fprintf(os.Stderr, "    OrioleDB pins PostgreSQL %s to %s\n", useRef, pinned)
+			useRef = pinned
+		}
 	}
 	repo := source.Repo{Dir: repoDir}
 
@@ -631,6 +656,25 @@ func cmdBuild(argv []string) int {
 		} else if !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
+		}
+	}
+
+	// THE EXTENSION, exported beside the fork. build.sh keys the whole
+	// orioledb path on orioledb/orioledb.control existing here, so without
+	// this the build succeeds as a fork-only build and nothing says so.
+	if isOriole && conf.Get("orioledb_extension") != "no" {
+		oref := source.ResolvedRef(orioleRepo, conf.Get("orioledb_ref"))
+		dst := filepath.Join(src, "orioledb")
+		if err := source.ExportTree(orioleRepo, oref, dst); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: exporting orioledb: %v\n", err)
+			return 2
+		}
+		sha := source.OrioleCommit(orioleRepo, conf.Get("orioledb_ref"))
+		fmt.Fprintf(os.Stderr, "    orioledb %s (%s) exported\n", oref, sha)
+		// Recorded, because a fork-only build and a real OrioleDB build are
+		// otherwise indistinguishable after the fact.
+		if err := workspace.Set(dir, "orioledb_sha", sha); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: recording orioledb_sha: %v\n", err)
 		}
 	}
 
