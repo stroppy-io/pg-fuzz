@@ -15,6 +15,7 @@ package gate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -228,4 +229,45 @@ func ackAge(row string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Since(d), true
+}
+
+// FinalStats fails a round in which too many slices reported no execution
+// count at all.
+//
+// THIS IS A FLEET-LEVEL GATE, and that is the point of it. Starvation judges
+// one target against a floor; this asks whether the ROUND's numbers can be
+// believed. It was written because 41 of 46 slices recorded no final stats
+// and nothing noticed -- libFuzzer's per-job fuzz-N.log files collide under
+// -jobs, so the parent log can come back with no totals while every target
+// looks individually unremarkable. A floor cannot be verified against a slice
+// that never said what it did.
+//
+// A slice that executed nothing is NOT counted as silent here: that is
+// starvation's verdict, and reporting it twice under two names makes a round
+// look worse than it is. Silence means the log carries no count either way.
+func FinalStats(stats []logs.Stats, minPercent int) Verdict {
+	v := Verdict{Name: "final-stats"}
+	if len(stats) == 0 {
+		return v // the caller already refuses a round with nothing to read
+	}
+	var silent []string
+	for _, s := range stats {
+		if s.Execs == 0 && s.Done == 0 && s.Inited == 0 {
+			silent = append(silent, s.Target)
+		}
+	}
+	reported := len(stats) - len(silent)
+	pct := reported * 100 / len(stats)
+	if pct >= minPercent {
+		return v
+	}
+	sort.Strings(silent)
+	v.Failed = true
+	v.Detail = append(v.Detail, fmt.Sprintf(
+		"%d of %d slices reported final stats (%d%%, floor %d%%)",
+		reported, len(stats), pct, minPercent))
+	v.Detail = append(v.Detail, "silent: "+strings.Join(silent, " "))
+	v.Detail = append(v.Detail,
+		"a floor cannot be verified against a slice that never said what it did")
+	return v
 }

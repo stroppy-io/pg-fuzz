@@ -122,3 +122,41 @@ func TestStaleAcknowledgementIsReportedNotWithdrawn(t *testing.T) {
 		t.Errorf("a stale acknowledgement must be reported, got %v", v.Detail)
 	}
 }
+
+// The fleet-level gate. It was written because 41 of 46 slices recorded no
+// final stats at all and nothing noticed: libFuzzer's per-job logs collide
+// under -jobs, so a parent log can come back with no totals while every
+// target looks individually unremarkable. A floor cannot be verified against
+// a slice that never said what it did.
+func TestFinalStatsFailsARoundThatWentMostlySilent(t *testing.T) {
+	loud := func(n string) logs.Stats { return logs.Stats{Target: n, Execs: 1000, Done: 1000, Inited: 10} }
+	mute := func(n string) logs.Stats { return logs.Stats{Target: n} }
+
+	all := []logs.Stats{loud("a"), loud("b"), loud("c"), loud("d")}
+	if v := FinalStats(all, 90); v.Failed {
+		t.Errorf("a fully-reporting round failed: %v", v.Detail)
+	}
+
+	mostly := []logs.Stats{loud("a"), mute("b"), mute("c"), mute("d")}
+	v := FinalStats(mostly, 90)
+	if !v.Failed {
+		t.Fatal("a round where 3 of 4 slices reported nothing must fail")
+	}
+	joined := strings.Join(v.Detail, " ")
+	for _, want := range []string{"1 of 4", "25%", "b", "c", "d"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("verdict does not name %q: %s", want, joined)
+		}
+	}
+}
+
+// A target that executed nothing is starvation's verdict, not this one.
+// Reporting the same slice twice under two names makes a round look worse
+// than it is.
+func TestFinalStatsDoesNotDoubleCountStarvation(t *testing.T) {
+	// Execs 0 but the log clearly spoke: it INITED and reported a Done line.
+	ran := logs.Stats{Target: "a", Inited: 500, Done: 500}
+	if v := FinalStats([]logs.Stats{ran}, 90); v.Failed {
+		t.Errorf("a slice that reported its counts was called silent: %v", v.Detail)
+	}
+}

@@ -94,7 +94,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz triage -w <ws> -t <target> -verdict V <artifact>
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
-  pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D]
+  pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D] [-min-stats P]
   pgfuzz clone <slug>|<path> <dest>
   pgfuzz reown [-w <ws>] [-all] [-n] [<path>...]
   pgfuzz repro -w <workspace> -t <target> <input>
@@ -874,6 +874,7 @@ func cmdGate(argv []string) int {
 	floor := fs.Int("floor", 10000, "executions below this is starvation")
 	baseline := fs.String("baseline", "", "ubsan accept-list (default: the repo's)")
 	since := fs.Duration("since", 0, "only judge logs written within this window")
+	minStats := fs.Int("min-stats", 90, "percent of slices that must report final stats")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil || *ws == "" {
 		fs.Usage()
@@ -949,6 +950,8 @@ func cmdGate(argv []string) int {
 	}
 	built, _ := build.Targets(buildDir(dir, c, r))
 	swept := map[string]bool{}
+	// Every parsed slice of this round, for the fleet-level verdict.
+	var round []logs.Stats
 	failed := 0
 	for _, lg := range runLogs {
 		st, err := logs.ParseFile(lg)
@@ -957,6 +960,7 @@ func cmdGate(argv []string) int {
 		}
 		st.Target = targetOf(lg)
 		swept[st.Target] = true
+		round = append(round, st)
 		for _, v := range []gate.Verdict{
 			gate.Starvation(st, *floor, starveAcks),
 			gate.SlowUnits(st),
@@ -971,6 +975,14 @@ func cmdGate(argv []string) int {
 	var sweptList []string
 	for t := range swept {
 		sweptList = append(sweptList, t)
+	}
+	// The round as a whole: whether its numbers can be believed at all.
+	// Starvation judges one target against a floor; this asks how many slices
+	// reported anything, because a floor cannot be verified against a slice
+	// that never said what it did.
+	if v := gate.FinalStats(round, *minStats); v.Failed {
+		failed++
+		fmt.Println(v)
 	}
 	if v := gate.RoundComplete(sweptList, built); v.Failed {
 		failed++
