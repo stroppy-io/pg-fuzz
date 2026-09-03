@@ -227,14 +227,20 @@ func shaFile(p string) string {
 // column headed "ref" came to print server_tree: the second model was written
 // from memory, and nothing compared it against the first.
 type BuildInfo struct {
-	PGRefSHA   string            `json:"pg_ref_sha"`
-	Sanitizer  string            `json:"sanitizer"`
-	ServerTree string            `json:"server_tree"`
-	OrioleDB   string            `json:"orioledb"`
-	Cassert    bool              `json:"cassert"`
-	BuiltAt    string            `json:"built_at"`
-	Engine     string            `json:"fuzzing_engine"`
-	Plugins    map[string]string `json:"plugins"`
+	PGRefSHA   string `json:"pg_ref_sha"`
+	Sanitizer  string `json:"sanitizer"`
+	ServerTree string `json:"server_tree"`
+	// A BOOL, because that is what build.sh writes. It was declared as a
+	// string, so every read of it hit an UnmarshalTypeError -- which
+	// ReadBuildInfo discards -- and came back empty. The one consumer, the
+	// census provenance table, therefore recorded no OrioleDB commit for any
+	// workspace. The commit itself is not in this file at all; it lives in
+	// workspace.conf as orioledb_sha.
+	OrioleDB bool              `json:"orioledb"`
+	Cassert  bool              `json:"cassert"`
+	BuiltAt  string            `json:"built_at"`
+	Engine   string            `json:"fuzzing_engine"`
+	Plugins  map[string]string `json:"plugins"`
 }
 
 // ReadBuildInfo parses one BUILD-INFO.json by path.

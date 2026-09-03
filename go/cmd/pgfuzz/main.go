@@ -2407,7 +2407,9 @@ func cmdCensus(argv []string) int {
 			}
 			prov = append(prov, census.Build{
 				Workspace: ws, Ref: workspaceRef(r.WS, ws), Sanitizer: bi.Sanitizer,
-				PGSHA: bi.PGRefSHA, OrioleDBSHA: bi.OrioleDB,
+				// From the CONF: BUILD-INFO's orioledb field is a bool saying
+				// whether this is an OrioleDB build, never the commit.
+				PGSHA: bi.PGRefSHA, OrioleDBSHA: workspaceOrioleSHA(r.WS, ws),
 				// The patches a workspace applies live in its conf, not in
 				// the build output.
 				Patches: workspacePatches(r.WS, ws),
@@ -4481,6 +4483,44 @@ func workspaceRef(wsRoot, ws string) string {
 }
 
 // workspacePatches names the patches a workspace applies, from its own conf.
+// workspaceOrioleSHA is the OrioleDB commit a workspace was built from.
+//
+// From workspace.conf, which is where it is written. BUILD-INFO.json carries
+// only a boolean saying whether the build is an OrioleDB one.
+//
+// Nine workspaces on disk hold `orioledb_sha=` with nothing after it, and an
+// older driver wrote the literal `(not built)`. Neither is a commit, and a
+// placeholder that reaches a provenance table is worse than a blank, so only
+// hex counts.
+func workspaceOrioleSHA(wsRoot, ws string) string {
+	b, err := os.ReadFile(filepath.Join(wsRoot, ws, "workspace.conf"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "orioledb_sha=")
+		if !ok {
+			continue
+		}
+		if v = strings.TrimSpace(v); isHex(v) && v != "" {
+			return v
+		}
+		return ""
+	}
+	return ""
+}
+
+// isHex reports whether every rune is a hex digit. An empty string is not a
+// commit, and neither is "(not built)".
+func isHex(s string) bool {
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
 func workspacePatches(wsRoot, ws string) string {
 	b, err := os.ReadFile(filepath.Join(wsRoot, ws, "workspace.conf"))
 	if err != nil {
