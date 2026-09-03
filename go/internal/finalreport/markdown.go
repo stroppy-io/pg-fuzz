@@ -96,7 +96,12 @@ func RenderMarkdown(out io.Writer, in RenderInputs) error {
 	// ---- findings --------------------------------------------------------
 	f := d.Findings
 	if f.Total > 0 {
-		p("## Findings\n\n**%d distinct findings, triaged.**\n\n", f.Total)
+		p("## Findings on record\n\n**%d distinct findings, triaged.**\n\n", f.Total)
+		p("> **These are the project's standing findings, not this run's alone.** A\n")
+		p("> finding is a write-up a person made after triage, and write-ups are not\n")
+		p("> stamped with the campaign that produced them — so they cannot be\n")
+		p("> attributed to one run. What *this* run produced is the reproducer count\n")
+		p("> above.\n\n")
 
 		if len(f.ByCategory) > 0 {
 			p("### By area\n\n| area | findings |\n|---|---:|\n")

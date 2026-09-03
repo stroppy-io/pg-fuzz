@@ -18,7 +18,7 @@ func renderFindings(o w, d Data, wsd map[string]WorkspaceData) {
 			}
 		}
 	}
-	o.s(`<section id="findings"><h2>What it turned up</h2>`)
+	o.s(`<section id="findings"><h2>Findings on record</h2>`)
 	o.s(`<div class="eli5"><p>Two different numbers get called &ldquo;findings&rdquo;, and ` +
 		`confusing them overstates the result by more than tenfold.</p>` +
 		`<p>An <b>artifact</b> is one saved input that made the target crash, run out of ` +
@@ -32,6 +32,21 @@ func renderFindings(o w, d Data, wsd map[string]WorkspaceData) {
 	o.p("<div class=\"fig\"><span class=\"v\">%s</span><span class=\"k\">distinct findings, triaged</span></div>\n",
 		commaI(fnd.Total))
 	o.s(`</div>`)
+	// THE TWO FIGURES ABOVE ARE NOT THE SAME SCOPE, and side by side they read
+	// as though they were. The artifact count is this run's, taken from its
+	// own workspaces. The finding count is the project's whole FINDINGS
+	// directory, which this report scans in full and prints under a heading
+	// naming one campaign -- so a run that built no storage engine published
+	// eight storage-engine findings whose own write-ups name workspaces from
+	// other campaigns entirely.
+	//
+	// Nothing in a write-up records the campaign that produced it, so the
+	// numbers cannot be filtered here. The page stops claiming instead.
+	o.s(`<div class="eli5"><p><b>These are the project's standing findings, not ` +
+		`this run's alone.</b> A finding is a write-up a person made after triage, and ` +
+		`write-ups are not stamped with the campaign that produced them &mdash; so they ` +
+		`cannot be attributed to one run, and this page does not pretend otherwise. ` +
+		`What <i>this</i> run produced is the artifact count beside it.</p></div>`)
 	if len(fnd.ByCategory) > 0 {
 		o.s(`<p>By area of the system:</p>`)
 		o.s(`<div class="wrap"><table class="cells"><tr><th>Area</th><th>Distinct findings</th></tr>`)
