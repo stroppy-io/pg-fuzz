@@ -67,7 +67,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz sweep -w <workspace> [-time S] [-jobs N] [-round N]
   pgfuzz campaign -slug NAME -hours H -w <ws> [-w <ws>...] [-on-deadline P]
                   [-sealed] [-jobs N] [-parallel N] [-time S] [-rebuild]
-  pgfuzz report   -slug NAME [-html FILE]
+  pgfuzz report   -slug NAME [-html FILE] [-md FILE]
   pgfuzz report   -final [-prefix P] [-html FILE] [-data FILE]
   pgfuzz report   -exec  [-prefix P] [-html FILE]
   pgfuzz report   -funnel <campaign.jsonl> [-against <other.jsonl>]
@@ -1512,6 +1512,7 @@ func cmdReport(argv []string) int {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	slug := fs.String("slug", "", "campaign name")
 	htmlOut := fs.String("html", "", "write a self-contained HTML report here")
+	mdOut := fs.String("md", "", "write the same report as Markdown here")
 	covWS := fs.String("cov", "", "coverage workspace to include")
 	final := fs.Bool("final", false, "the campaign snapshot report")
 	execSum := fs.Bool("exec", false, "the one-page summary")
@@ -1544,8 +1545,8 @@ func cmdReport(argv []string) int {
 	r := paths.Resolve()
 	s := campaign.Series{Path: filepath.Join(r.Campaigns(), *slug, "series.jsonl")}
 
-	if *htmlOut != "" {
-		return writeHTML(r, *slug, s, *covWS, *htmlOut)
+	if *htmlOut != "" || *mdOut != "" {
+		return writeReport(r, *slug, s, *covWS, *htmlOut, *mdOut)
 	}
 
 	rows, err := s.Read()
@@ -2203,7 +2204,12 @@ func slugFromPath(path string, r paths.Roots) string {
 	return reWSSuffix.ReplaceAllString(first, "")
 }
 
-func writeHTML(r paths.Roots, slug string, s campaign.Series, covWS, out string) int {
+// writeReport renders a campaign's report, as HTML, as Markdown, or both.
+//
+// ONE GATHER for however many documents are asked for. Two reports of one
+// campaign assembled from two readings of the record is how they come to
+// disagree, which has happened here three times already.
+func writeReport(r paths.Roots, slug string, s campaign.Series, covWS, out, mdPath string) int {
 	var cov *coverage.Summary
 	if covWS != "" {
 		dir, c, _, err := openWS(covWS)
@@ -2241,22 +2247,36 @@ func writeHTML(r paths.Roots, slug string, s campaign.Series, covWS, out string)
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
 	}
-	f, err := os.Create(out)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
-		return 2
+	emit := func(path string, render func(io.Writer) error) int {
+		f, err := os.Create(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		defer f.Close()
+		if err := render(f); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 1
+		}
+		fi, _ := f.Stat()
+		fmt.Printf("%s  %s bytes  %d findings", path, comma(int(fi.Size())), len(d.Findings))
+		if cov != nil {
+			fmt.Printf("  %.2f%% lines", cov.Lines.Pct())
+		}
+		fmt.Println()
+		return 0
 	}
-	defer f.Close()
-	if err := report.Render(f, d); err != nil {
-		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
-		return 1
+
+	if out != "" {
+		if code := emit(out, func(w io.Writer) error { return report.Render(w, d) }); code != 0 {
+			return code
+		}
 	}
-	fi, _ := f.Stat()
-	fmt.Printf("%s  %s bytes  %d findings", out, comma(int(fi.Size())), len(d.Findings))
-	if cov != nil {
-		fmt.Printf("  %.2f%% lines", cov.Lines.Pct())
+	if mdPath != "" {
+		if code := emit(mdPath, func(w io.Writer) error { return report.RenderMarkdown(w, d) }); code != 0 {
+			return code
+		}
 	}
-	fmt.Println()
 	return 0
 }
 
