@@ -60,6 +60,7 @@ import (
 const usage = `pgfuzz -- reproduce a recorded finding
 
   pgfuzz build -w <workspace> [-ref R] [-sanitizer S] [-engine E]
+                [-no-disk-check] [-no-stack-check] [-into DIR]
   pgfuzz targets -w <workspace>
   pgfuzz run   -w <workspace> -t <target> [-time S] [-jobs N]
   pgfuzz sweep -w <workspace> [-time S] [-jobs N] [-round N]
@@ -485,6 +486,7 @@ func cmdBuild(argv []string) int {
 	into := fs.String("into", "", "build into this directory instead of the workspace's builds/")
 	keepSrc := fs.Bool("keep-src", false, "keep the exported source tree")
 	noDisk := fs.Bool("no-disk-check", false, "build even with little free space")
+	noStackCheck := fs.Bool("no-stack-check", false, "build even without the ASan stack-depth fix")
 	noPin := fs.Bool("no-pin", false, "build against whatever substrate is present, ignoring the pin")
 	timeout := fs.Duration("timeout", 90*time.Minute, "give up after this long")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -565,6 +567,19 @@ func cmdBuild(argv []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
+	}
+
+	// REFUSED BEFORE THE CONTAINER STARTS, and only for ASan. A tree without
+	// upstream's use-after-return stack-depth fix cannot execute a single
+	// utility statement under AddressSanitizer, and says nothing about it --
+	// it reports healthy execution counts and accumulates coverage. patch= is
+	// consulted first, since a workspace pinned to an older minor may carry
+	// the cherry-pick.
+	if !*noStackCheck {
+		if err := build.CheckStackFix(repo.Dir, full, useSan, conf.Get("patch")); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
 	}
 	moving := ""
 	if repo.IsMoving(ctx, useRef) {
