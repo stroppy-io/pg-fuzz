@@ -3052,7 +3052,13 @@ func cmdBundle(argv []string) int {
 				" the numbers describe a moving target\n", *slug, pid)
 	}
 	if *outDir == "" {
-		*outDir = campDir
+		// ONE LEVEL DOWN, not into the run namespace. `pgfuzz index` treats
+		// any subdirectory of the slug holding a MANIFEST.json as an archived
+		// RUN, and a bundle writes one -- so every bundle became a phantom row
+		// on the campaign history, rendering ? and - across the board and
+		// flipping a "definition widened" notice on a directory that is not a
+		// run.
+		*outDir = filepath.Join(campDir, "bundles")
 	}
 	stage := filepath.Join(*outDir, bundle.Name(*slug, time.Now()))
 	if err := os.MkdirAll(stage, 0o755); err != nil {
@@ -3146,6 +3152,7 @@ func cmdBundle(argv []string) int {
 	}
 	if !*noCorpus {
 		var total int64
+		archived := 0
 		var failed []string
 		if entries, err := os.ReadFile(filepath.Join(campDir, "live", "entries")); err == nil {
 			for _, ws := range strings.Fields(string(entries)) {
@@ -3153,12 +3160,17 @@ func cmdBundle(argv []string) int {
 				if !fileExists(src) {
 					continue
 				}
-				n, err := bundle.ArchiveDir(stage, filepath.Join("corpus", ws+".tar.gz"), src)
+				// VERIFIED AGAINST A COUNT TAKEN FROM THE SOURCE, not
+				// against the archive's own byte total -- an archive short by
+				// a few files looks exactly like a complete one.
+				note, err := bundle.ArchiveDirCounted(stage,
+					filepath.Join("corpus", ws+".tar.gz"), src)
 				if err != nil {
 					failed = append(failed, ws+": "+err.Error())
 					continue
 				}
-				total += n
+				total += note.Bytes
+				archived += note.Archived
 			}
 		}
 		switch {
@@ -3167,7 +3179,8 @@ func cmdBundle(argv []string) int {
 		case total == 0:
 			m.Add("corpus", false, "no corpus found for this campaign's workspaces")
 		default:
-			m.Add("corpus", true, comma(int(total))+" bytes archived")
+			m.Add("corpus", true, fmt.Sprintf("%s inputs, verified (%s)",
+				comma(archived), humanBytes(total)))
 		}
 	} else {
 		m.Add("corpus", true, "omitted by -no-corpus")

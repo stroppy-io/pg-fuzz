@@ -146,8 +146,19 @@ func GatherIndex(root, slug string) (IndexData, error) {
 		if !e.IsDir() {
 			continue
 		}
-		// A manifest is what makes a directory a RUN. `live/` and `bundles/`
-		// have none, and neither does a directory someone left behind.
+		// A manifest is what makes a directory a RUN, EXCEPT for the three
+		// the campaign keeps for itself. `live/` has none, but `bundles/` and
+		// `ws/` do -- so before this every bundle became a phantom row on the
+		// history page, rendering ? and - across every column and flipping a
+		// "definition widened" notice on a directory that is not a run.
+		//
+		// Excluded by name rather than by content: a genuine archive from
+		// before fingerprints existed has no config_fingerprint either, and it
+		// is still a run. The Python rendered it as ?, and so does this.
+		switch e.Name() {
+		case "live", "bundles", "ws":
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(dir, e.Name(), "MANIFEST.json")); err != nil {
 			continue
 		}

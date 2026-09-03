@@ -194,7 +194,79 @@ func Archive(stage, out string) (int64, error) {
 // the reason they are archived rather than copied: a folder of two million
 // tiny files is slow to copy, slow to move and slower to delete, and every
 // one of them is already content-addressed so the tar loses nothing.
+// ArchiveNote is what an archive can say about itself.
+//
+// COUNTED INDEPENDENTLY OF THE ARCHIVE. A byte total cannot tell a complete
+// archive from one short by a few files -- both are "some bytes" -- so the
+// files are counted from the SOURCE before the tar is written and the archive
+// is checked against that number afterwards. This is the guard the shell had
+// and the port dropped for a byte count.
+type ArchiveNote struct {
+	Inputs   int   // counted from the source, before archiving
+	Archived int   // counted back out of the archive
+	Bytes    int64 //
+	Verified bool  // Inputs == Archived
+}
+
 func ArchiveDir(stage, rel, src string) (int64, error) {
+	n, err := ArchiveDirCounted(stage, rel, src)
+	return n.Bytes, err
+}
+
+// ArchiveDirCounted archives a directory and verifies what landed in it.
+func ArchiveDirCounted(stage, rel, src string) (ArchiveNote, error) {
+	var note ArchiveNote
+	// FIRST, so the check is against a number that did not come from the
+	// archive.
+	filepath.WalkDir(src, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			note.Inputs++
+		}
+		return nil
+	})
+	size, err := archiveDir(stage, rel, src)
+	note.Bytes = size
+	if err != nil {
+		return note, err
+	}
+	note.Archived, err = countTarGz(filepath.Join(stage, rel))
+	if err != nil {
+		return note, err
+	}
+	note.Verified = note.Archived == note.Inputs
+	if !note.Verified {
+		return note, fmt.Errorf("archive is short: %d of %d inputs", note.Archived, note.Inputs)
+	}
+	return note, nil
+}
+
+// countTarGz counts the regular files an archive actually contains.
+func countTarGz(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return 0, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	n := 0
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if h.Typeflag == tar.TypeReg {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func archiveDir(stage, rel, src string) (int64, error) {
 	dst := filepath.Join(stage, rel)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return 0, err
@@ -225,21 +297,27 @@ func ArchiveDir(stage, rel, src string) (int64, error) {
 			return nil
 		}
 		hdr.Name = relp
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
 		if d.IsDir() {
-			return nil
+			return tw.WriteHeader(hdr)
 		}
+		// OPENED BEFORE THE HEADER IS WRITTEN. Writing the header first and
+		// then failing to open leaves the tar expecting bytes that never
+		// arrive -- "archive/tar: missed writing N bytes" -- so the archive is
+		// CORRUPT rather than short, and the repair message that was meant to
+		// explain it never printed.
+		//
+		// Counted, not ignored: an unreadable corpus entry is the mode-600
+		// root-owned case, and an archive quietly short of them is one that
+		// looks complete.
 		in, err := os.Open(p)
 		if err != nil {
-			// Counted, not ignored: an unreadable corpus entry is the mode-600
-			// root-owned case, and an archive quietly short of them is one
-			// that looks complete.
 			skipped++
 			return nil
 		}
 		defer in.Close()
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
 		_, err = io.Copy(tw, in)
 		return err
 	})
