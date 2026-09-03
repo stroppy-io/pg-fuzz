@@ -1459,6 +1459,35 @@ func cmdCampaign(argv []string) int {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 1
 	}
+
+	// THE STOP MARKER, which had a reader, a path helper and a line in the
+	// bundle inventory, and no writer anywhere. Without it the final report's
+	// "stopped at" is blank for every campaign this tool runs, and nothing
+	// afterwards can say how big each corpus was when the numbers were taken
+	// -- so a bundle cannot be checked against the corpus it was measured on.
+	var counts []finalreport.CorpusCount
+	for _, e := range entries {
+		// Entry.Data already resolves this: the workspace for a local run,
+		// the campaign's own directory for a sealed one.
+		dir := filepath.Join(e.Data, "corpus")
+		ents, _ := os.ReadDir(dir)
+		for _, t := range ents {
+			if !t.IsDir() {
+				continue
+			}
+			n := len(corpus.Artifacts(filepath.Join(dir, t.Name())))
+			counts = append(counts, finalreport.CorpusCount{
+				Workspace: e.Name, Target: t.Name(), Inputs: n,
+			})
+		}
+	}
+	if err := finalreport.WriteStopMarker(
+		finalreport.MarkerPath(r.WS), time.Now(), counts); err != nil {
+		// Said, not swallowed: the report reads this file and reports nothing
+		// when it is missing, which looks like a campaign that never stopped.
+		fmt.Fprintf(os.Stderr, "pgfuzz: could not record the stop marker: %v\n", err)
+	}
+
 	fmt.Printf("campaign %s complete\n", *slug)
 	return 0
 }
@@ -3209,6 +3238,7 @@ func cmdBundle(argv []string) int {
 	} else {
 		m.Add("series", true, "series.jsonl")
 	}
+
 	if b := census.New(); true {
 		var logs int
 		known := map[string]string{}
