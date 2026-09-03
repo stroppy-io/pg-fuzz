@@ -4360,6 +4360,142 @@ func cmdPlateau(argv []string) int {
 	return plateau.Watch(ctx, r.WS, wss, o)
 }
 
+// stampCampaigns writes a **Campaign:** line into write-ups that have none.
+//
+// WHAT IT WILL NOT DO. It attributes a finding only when the workspaces its
+// text names resolve, through the campaign manifests, to exactly one campaign.
+// Everything else is written as unknown -- recorded rather than left absent,
+// because an absent field and an unanswerable one look identical to a reader
+// and to the gate, and because a countable gap is one a person can close.
+//
+// A looser rule was tried and produced eight attributions out of twenty-five,
+// all of them wrong: it pinned any finding mentioning a workspace onto
+// whichever runs of that workspace happened to have been archived, which is a
+// fact about what was kept, not about the defect.
+func stampCampaigns(findingsRoot, campaignsRoot string, knownWS map[string]bool, apply bool) int {
+	byWS := findingsmeta.WorkspaceCampaigns(campaignsRoot)
+	var attributed, unknown, already int
+
+	for _, n := range triage.FindingDirs(findingsRoot) {
+		path := filepath.Join(findingsRoot, n, "README.md")
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		txt := string(b)
+		if findingsmeta.Campaign(txt) != "" {
+			already++
+			continue
+		}
+		value := findingsmeta.UnknownCampaign
+		if c, ok := findingsmeta.CampaignFor(triage.WorkspacesNamed(txt, knownWS), byWS); ok {
+			value = c
+			attributed++
+		} else {
+			unknown++
+		}
+		fmt.Printf("  %-46s %s\n", n, value)
+		if !apply {
+			continue
+		}
+		out, err := insertField(txt, findingsmeta.CampaignField, value)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %s: %v\n", n, err)
+			return 2
+		}
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+	}
+	verb := "would add"
+	if apply {
+		verb = "added"
+	}
+	fmt.Printf("\n  %s %d field(s): %d attributed, %d unknown; %d already had one\n",
+		verb, attributed+unknown, attributed, unknown, already)
+	if !apply {
+		fmt.Println("  dry run -- pass -apply to write")
+	}
+	return 0
+}
+
+// insertField puts a **Name:** line beside the write-up's other fields.
+//
+// BESIDE THE OTHERS, not at the top and not at the end: the fields are a block
+// under the title, every reader of this format expects them there, and a line
+// appended to the end of a document is not a field, it is a postscript.
+func insertField(md, name, value string) (string, error) {
+	lines := strings.Split(md, "\n")
+	last := -1
+	for i, l := range lines {
+		if reFieldLine.MatchString(l) {
+			last = i
+		}
+	}
+	if last < 0 {
+		// No field block at all: place it after the title, which every
+		// write-up has.
+		for i, l := range lines {
+			if strings.HasPrefix(l, "# ") {
+				last = i
+				break
+			}
+		}
+		if last < 0 {
+			return "", fmt.Errorf("no title and no fields to place it beside")
+		}
+		out := append([]string{}, lines[:last+1]...)
+		out = append(out, "", "**"+name+":** "+value)
+		return strings.Join(append(out, lines[last+1:]...), "\n"), nil
+	}
+	// MATCH THE SURROUNDING STYLE. These write-ups separate their fields with
+	// a blank line, and a field written without one is not a field: Markdown
+	// folds it into the preceding paragraph, so a Campaign line landed inside
+	// the Cause text and changed how that field reads.
+	blank := last+1 < len(lines) && strings.TrimSpace(lines[last+1]) == ""
+	out := append([]string{}, lines[:last+1]...)
+	if blank {
+		out = append(out, "", "**"+name+":** "+value)
+	} else {
+		out = append(out, "**"+name+":** "+value)
+	}
+	return strings.Join(append(out, lines[last+1:]...), "\n"), nil
+}
+
+var reFieldLine = regexp.MustCompile(`^\*\*[A-Z][A-Za-z ]*:?\*\*:?\s`)
+
+// scopeOf decides whether a write-up is in scope, and on what evidence.
+//
+// THE RECORDED CAMPAIGN WINS. A write-up that states its campaign is answering
+// the question; the workspace names in its prose are an author's aside that
+// happens to be usable. Only twenty-five findings carry the field today and
+// twenty-three of those say "unknown", so the prose path still does the work
+// -- but every write-up recorded from here on will answer directly, and this
+// is the order that makes that true without a second change later.
+//
+// THE PATTERN MEANS TWO THINGS, and the flag is a glob for that reason: it is
+// matched against a campaign SLUG when the field answers, and against
+// WORKSPACE NAMES when the prose has to. A workspace is conventionally its
+// campaign's slug plus a sanitizer suffix, so one glob covers both.
+//
+// A recorded "unknown" FALLS BACK, because that is what it says. It means the
+// campaign is not established -- not that this finding belongs to no campaign
+// -- so the weaker evidence in the prose is still the best there is. Treating
+// it as a definite no dropped a scoped report from ten findings to two and
+// called that an improvement.
+func scopeOf(txt string, pats []string, knownWS map[string]bool) ([]string, bool) {
+	if c := findingsmeta.Campaign(txt); c != "" && c != findingsmeta.UnknownCampaign {
+		if matchesAny(c, pats) {
+			return []string{c}, true
+		}
+		// A stated campaign that does not match is a definite no, not a
+		// reason to go looking for a workspace name that might.
+		return nil, false
+	}
+	return triage.InScope(txt, pats, knownWS)
+}
+
 // matchesAny reports whether a name matches any of the globs.
 func matchesAny(name string, pats []string) bool {
 	for _, p := range pats {
@@ -4381,6 +4517,9 @@ func cmdTriageReport(argv []string) int {
 	var wsPat wsList
 	fs.Var(&wsPat, "ws", "only findings naming a workspace matching this glob\n"+
 		"    	(repeatable, e.g. -ws 'pg17-10-ext-*')")
+	stamp := fs.Bool("stamp-campaign", false, "add a **Campaign:** line to write-ups that have none\n"+
+		"    	(dry run; -apply writes)")
+	apply := fs.Bool("apply", false, "with -stamp-campaign, write the files")
 	var notPat wsList
 	fs.Var(&notPat, "not", "drop findings whose directory name matches this glob\n"+
 		"    	(repeatable, e.g. -not 'orioledb-*')")
@@ -4399,6 +4538,9 @@ func cmdTriageReport(argv []string) int {
 		*out = filepath.Join(findingsRoot, "TRIAGE.md")
 	}
 	baseline := filepath.Join(home, "scripts", "ubsan-baseline.tsv")
+	// Validated against the workspaces that exist: matching the shape alone
+	// returns mailing lists, patch branches and other findings' names.
+	knownWS := triage.KnownWorkspaces(r.WS)
 
 	var findings []triage.Finding
 	scoped := map[string][]string{}
@@ -4417,7 +4559,11 @@ func cmdTriageReport(argv []string) int {
 		// that built no storage engine still listed eight storage-engine
 		// findings from other campaigns entirely.
 		if len(wsPat) > 0 {
-			hit, ok := triage.InScope(triage.ReadWriteup(findingsRoot, n, true), wsPat)
+			// THE FIELD FIRST, prose only when there is none. A write-up that
+			// records its campaign is evidence; a workspace name typed in the
+			// text is an author's aside that happens to be usable.
+			txt := triage.ReadWriteup(findingsRoot, n, true)
+			hit, ok := scopeOf(txt, wsPat, knownWS)
 			if !ok {
 				dropped++
 				continue
@@ -4463,6 +4609,9 @@ func cmdTriageReport(argv []string) int {
 		text = "> " + *note + "\n\n" + text
 	}
 
+	if *stamp {
+		return stampCampaigns(findingsRoot, r.Campaigns(), knownWS, *apply)
+	}
 	// ATTRIBUTION MUST STAY RECORDED. Every finding on disk carries a
 	// **Found by:** line; nothing stopped the next one being added without
 	// it, at which point every report here goes back to inferring the target
