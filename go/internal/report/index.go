@@ -47,6 +47,22 @@ type IndexData struct {
 }
 
 // KV is one provenance row.
+// AnyMasked is whether ANY run masked a target, which is a different question
+// from whether a target was masked across CONSECUTIVE runs.
+//
+// A METHOD, not a field: the section that needs it is reachable from more than
+// one path, and a field computed in GatherIndex alone is stale everywhere
+// else -- which is how the gate came to be written against Streaks in the
+// first place.
+func (d IndexData) AnyMasked() bool {
+	for _, r := range d.Runs {
+		if !r.Broken && r.Masked > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 type KV struct{ K, V string }
 
 // FuzzerRow is one target's binary fingerprint across the workspaces.
@@ -525,7 +541,7 @@ comparable; what changed is how much of them is pinned. Only &#9888; means an
 input actually moved.</div>
 {{end}}</section>
 
-{{if .Streaks}}
+{{if or .AnyMasked .Streaks}}
 <section id="masked"><h2>What the gates let through, run by run</h2>
 <div class="eli5"><p>Every rule that stops a ratchet crying wolf also hides
 something. Three do it here: an <b>acknowledgement</b> suppresses a target
@@ -543,6 +559,7 @@ this table answers: what has been quietly unguarded, and for how long.</p></div>
 <td class="warn">{{.Masked}}</td></tr>
 {{end}}{{end}}{{end}}</table></div>
 
+{{if .Streaks}}
 <h3>Masked without a break, counting back from the newest run</h3>
 <p>A target here has not been genuinely guarded for the number of consecutive
 runs shown. The longest streaks are the ones to read first &mdash; they are
@@ -553,6 +570,9 @@ where a regression could have arrived unnoticed.</p>
 <td style="text-align:left">{{.How}}</td><td>{{.Since}}</td></tr>
 {{end}}</table></div>
 {{if .MoreStreak}}<p class="dim">{{.MoreStreak}} more not listed.</p>
+{{end}}
+{{else}}<p class="dim">No target was masked in two consecutive runs, so there
+is no streak to report. The table above still stands: masking happened.</p>
 {{end}}</section>
 {{end}}
 
