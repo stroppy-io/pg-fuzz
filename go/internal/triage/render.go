@@ -82,9 +82,19 @@ func Render(findings []Finding, lifts []Lead, censuses []Census,
 	b.w("  both filters in the report skipped `20*-` and `reports/` but")
 	b.w("  not dotfiles. It was counted as a PostgreSQL-core finding, and as")
 	b.w(`  "not attributable from the write-up" in the per-target table.`)
+	// ONLY FOR FINDINGS THAT ARE ACTUALLY HERE. AttribOverride is a static
+	// map, so a scoped document explained the re-attribution of a finding it
+	// had just excluded -- a note about something the reader cannot see, in
+	// the one section whose job is explaining why the count is what it is.
+	present := make(map[string]bool, len(findings))
+	for _, f := range findings {
+		present[f.Name] = true
+	}
 	var ovNames []string
 	for n := range AttribOverride {
-		ovNames = append(ovNames, n)
+		if present[n] {
+			ovNames = append(ovNames, n)
+		}
 	}
 	sort.Strings(ovNames)
 	for _, n := range ovNames {

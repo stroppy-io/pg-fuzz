@@ -2,6 +2,7 @@ package triage
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +40,32 @@ func TestInScopeExcludesTheUnattributable(t *testing.T) {
 	if _, ok := InScope("A defect with no workspace named anywhere.",
 		[]string{"pg17-10-ext-*"}); ok {
 		t.Error("an unattributable write-up was claimed by a campaign")
+	}
+}
+
+// A NOTE ABOUT AN EXCLUDED FINDING IS A NOTE ABOUT NOTHING.
+//
+// The header explaining why the count is what it is looped over a static
+// override map, so a scoped document explained the re-attribution of a finding
+// it had just filtered out -- in the one section whose job is accounting for
+// the number.
+func TestOverrideNotesOnlyForPresentFindings(t *testing.T) {
+	var name string
+	for n := range AttribOverride {
+		name = n
+		break
+	}
+	if name == "" {
+		t.Skip("no attribution overrides to test with")
+	}
+
+	with := Render([]Finding{{Name: name, Area: "PostgreSQL core"}}, nil, nil, nil, nil)
+	if !strings.Contains(with, name) {
+		t.Errorf("the note is missing when the finding IS present")
+	}
+
+	without := Render([]Finding{{Name: "something-else", Area: "PostgreSQL core"}}, nil, nil, nil, nil)
+	if strings.Contains(without, "`"+name+"` is counted under") {
+		t.Errorf("the note explains %q, which this document excludes", name)
 	}
 }
