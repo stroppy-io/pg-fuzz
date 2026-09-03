@@ -46,6 +46,11 @@ type Plan struct {
 	// the very corruption they are there to detect. A step that undoes itself
 	// carries no delta at all -- its count must not move.
 	RowDelta int
+
+	// Parallel runs this step once per recorded writer instead of once.
+	// Only meaningful for Concurrent steps whose statements do not change
+	// cardinality.
+	Parallel bool
 }
 
 // PlanStep turns a recorded step into something executable.
@@ -162,7 +167,12 @@ func PlanStep(s Step, sc Scenario) (Plan, bool) {
 
 	// ---- needs a second session ----------------------------------------
 	case "concurrent_write":
-		return Plan{Kind: Concurrent, SQL: []string{
+		// Parallel across the scenario's writers: this is the step the
+		// recorded `writers` count is about. An UPDATE, so N sessions do not
+		// disturb the cardinality oracle -- unlike the DDL shapes below, where
+		// a second session would collide with the first by construction rather
+		// than by contention.
+		return Plan{Kind: Concurrent, Parallel: true, SQL: []string{
 			f("UPDATE %s SET v = v + 1 WHERE i %% 5 = 0;", t)}}, true
 	case "concurrent_ddl":
 		return Plan{Kind: Concurrent, SQL: []string{

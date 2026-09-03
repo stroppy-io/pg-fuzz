@@ -2627,7 +2627,15 @@ func cmdStorage(argv []string) int {
 			// The scenario, not the seed: the generator will change, and then
 			// this seed builds something else. A recorded number is a label;
 			// a recorded scenario is a reproducer.
-			rec := scenario.Record{Seed: seed, Failure: verdict, Scenario: sc}
+			// NOTES TRAVEL WITH THE ARTIFACT. A note is a perturbation that
+			// did not happen, or one that happened and was expected -- a
+			// refusal, a deadlock under contention. Without them a scenario
+			// that skipped half its steps is indistinguishable from one that
+			// ran them, and a reproducer's worth depends on which it was.
+			rec := scenario.Record{
+				Seed: seed, Failure: verdict, Scenario: sc,
+				Notes: scenario.NoteLines(res.Output),
+			}
 			if b, err := json.MarshalIndent(rec, "", " "); err == nil {
 				os.WriteFile(filepath.Join(*out, fmt.Sprintf("seed%d.json", seed)),
 					append(b, '\n'), 0o644)

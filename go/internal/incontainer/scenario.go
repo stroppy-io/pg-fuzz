@@ -63,6 +63,15 @@ func Scenario(argv []string) int {
 		// access method.
 		srv.Preload = "orioledb"
 	}
+	// Notes are what happened and was expected: a refusal, a deadlock under
+	// contention, a step that could not run. Printed as they occur so a
+	// failing run still carries the ones it reached.
+	note := func(s string) {
+		// Printed rather than accumulated: the host reads the stream, so a
+		// run that dies later still carries the notes it reached.
+		fmt.Printf("SFZ-NOTE: %s\n", s)
+	}
+
 	fail := func(what string) int {
 		fmt.Printf("SFZ-RESULT: %s\n", what)
 		fmt.Println("SFZ-BEGIN-LOG")
@@ -139,10 +148,51 @@ func Scenario(argv []string) int {
 				return fail(st.Op + ": " + pickError(out))
 			}
 		case scenario.Concurrent:
-			done := make(chan struct{})
-			go func(stmts []string) { srv.SQL("/out", db, stmts); close(done) }(p.SQL)
+			// EVERY WRITER IS WAITED ON, AND ITS ERROR IS READ.
+			//
+			// The previous version launched one goroutine and dropped the
+			// return value, so a writer that died -- including on a crash --
+			// was silently ignored, which is the one outcome a concurrency
+			// step exists to detect.
+			//
+			// N sessions when the step is parallel, from the scenario's own
+			// recorded writers count. That count was recorded in every
+			// artifact and replayed by nothing, so a scenario captured with
+			// four writers came back single-threaded and any contention
+			// finding failed to reproduce.
+			n := 1
+			if p.Parallel && sc.Writers > 1 {
+				n = sc.Writers
+			}
+			errs := make(chan string, n)
+			for i := 0; i < n; i++ {
+				go func(stmts []string) {
+					out, err := srv.SQL("/out", db, stmts)
+					if err != nil {
+						errs <- pickError(out)
+						return
+					}
+					errs <- ""
+				}(p.SQL)
+			}
+			// Overlap the writers with the main session, which is the point.
 			srv.SQL("/out", db, []string{"SELECT pg_sleep(0.2);"})
-			<-done
+			for i := 0; i < n; i++ {
+				msg := <-errs
+				switch {
+				case msg == "":
+				case scenario.Transient(msg):
+					// The engine doing its job under contention. Recorded as
+					// something that happened, never as a finding: reporting
+					// a deadlock as a defect teaches the reader that this
+					// engine cries wolf.
+					note("transient during " + st.Op + ": " + msg)
+				case scenario.Unsupported(msg):
+					note("unsupported during " + st.Op + ": " + msg)
+				default:
+					return fail(st.Op + " (concurrent writer): " + msg)
+				}
+			}
 		case scenario.Control:
 			if p.Ctl == "crash" {
 				srv.Crash()
