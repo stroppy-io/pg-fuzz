@@ -73,7 +73,8 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz report   -funnel <campaign.jsonl> [-against <other.jsonl>]
   pgfuzz report   -record <campaign.jsonl> [-against <other.jsonl>]
   pgfuzz tui      [<slug>|<path>]   default: the campaign you are standing in
-  pgfuzz coverage -w <cov-workspace> [-union]
+  pgfuzz coverage -w <cov-workspace> [-union] [-measure [-t TARGET]]
+                  [-min-free-gb N] [-stop-free-gb N]
   pgfuzz ratchet  -w <workspace> [-update] [-baseline FILE]
                   [-show|-cusum|-activity|-distribution|-variance]
                   [-reseed <target> -reason "..." [-since ISO]]
@@ -1480,9 +1481,13 @@ func cmdCoverage(argv []string) int {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
 	ws := fs.String("w", "", "coverage workspace")
 	union := fs.Bool("union", true, "merge every per-target profile")
+	measure := fs.Bool("measure", false, "replay each target's corpus and record its coverage")
+	only := fs.String("t", "", "measure only this target")
+	minFree := fs.Float64("min-free-gb", 60, "refuse to start below this much free space")
+	stopFree := fs.Float64("stop-free-gb", 20, "kill the run if free space falls below this")
 	timeout := fs.Duration("timeout", 60*time.Minute, "give up after this long")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
-	if err := fs.Parse(argv); err != nil || *ws == "" || !*union {
+	if err := fs.Parse(argv); err != nil || *ws == "" || (!*union && !*measure) {
 		fs.Usage()
 		return 2
 	}
@@ -1490,6 +1495,61 @@ func cmdCoverage(argv []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
+	}
+
+	// MEASURE, which nothing in the port did. FindProfiles reads a layout only
+	// the deleted shell created, so coverage was a view over leftovers that
+	// would return nothing forever once they were pruned.
+	if *measure {
+		targets, _ := build.Targets(buildDir(dir, c, r))
+		if *only != "" {
+			targets = []string{*only}
+		}
+		if len(targets) == 0 {
+			fmt.Fprintf(os.Stderr, "pgfuzz: nothing built in %s\n", dir)
+			return 2
+		}
+		home, err := r.NeedHome()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		series := filepath.Join(home, "scripts", "coverage-series.jsonl")
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		failed := 0
+		for _, t := range targets {
+			sum, err := coverage.Measure(ctx, coverage.MeasureRequest{
+				OSSFuzz: r.OSSFuzz(), Project: c.Project, Target: t,
+				Corpus:    filepath.Join(dir, "corpus", t),
+				Out:       buildDir(dir, c, r),
+				Sanitizer: c.Sanitizer,
+				MinFreeGB: *minFree, StopFreeGB: *stopFree,
+				Stream: os.Stderr,
+			})
+			if err != nil {
+				// Said out loud and counted. A target whose measurement was
+				// refused must not read as a target with no coverage.
+				fmt.Fprintf(os.Stderr, "  %-26s NOT RECORDED: %v\n", t, err)
+				failed++
+				continue
+			}
+			if err := coverage.RecordTarget(series, c.Name, sum); err != nil {
+				fmt.Fprintf(os.Stderr, "  %-26s could not record: %v\n", t, err)
+				failed++
+				continue
+			}
+			fmt.Printf("  %-26s %d/%d lines (%.1f%%)\n",
+				t, sum.Lines.Covered, sum.Lines.Count, sum.Lines.Percent)
+		}
+		if failed > 0 {
+			fmt.Fprintf(os.Stderr, "\n%d target(s) produced no usable measurement\n", failed)
+			return 1
+		}
+		if !*union {
+			return 0
+		}
 	}
 	profiles, err := coverage.FindProfiles(r.WS)
 	if err != nil || len(profiles) == 0 {
