@@ -24,15 +24,23 @@ func TestBothPagesShareOneTokenSet(t *testing.T) {
 	}
 	reDef := regexp.MustCompile(`(--[a-z0-9-]+)\s*:`)
 
+	// A definition with a LITERAL value is a second palette. A definition
+	// whose value is var(--other) is an alias: it renames a shared token
+	// without deciding anything, so a theme change still flows through it.
+	reAlias := regexp.MustCompile(`(--[a-z0-9-]+)\s*:\s*var\(`)
 	defined := func(css string) []string {
+		alias := map[string]bool{}
+		for _, m := range reAlias.FindAllStringSubmatch(css, -1) {
+			alias[m[1]] = true
+		}
 		var out []string
 		seen := map[string]bool{}
 		for _, m := range reDef.FindAllStringSubmatch(css, -1) {
-			// var(--x) is a USE, not a definition.
-			if !seen[m[1]] {
-				seen[m[1]] = true
-				out = append(out, m[1])
+			if alias[m[1]] || seen[m[1]] {
+				continue
 			}
+			seen[m[1]] = true
+			out = append(out, m[1])
 		}
 		sort.Strings(out)
 		return out
@@ -61,7 +69,9 @@ func TestNoPageUsesAnUndefinedToken(t *testing.T) {
 		{"index", baseCSS},
 	} {
 		for _, m := range reUse.FindAllStringSubmatch(p.css, -1) {
-			if !strings.Contains(tokensCSS, m[1]+":") {
+			// Defined by the shared tokens, or aliased on the page itself.
+			if !strings.Contains(tokensCSS, m[1]+":") &&
+				!strings.Contains(p.css, m[1]+":var(") {
 				t.Errorf("%s uses %s, which the shared tokens do not define",
 					p.name, m[1])
 			}

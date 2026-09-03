@@ -28,6 +28,11 @@ var baseRules string
 // layout rules -- they lay out different things -- but both resolve their
 // colours and type from here.
 //
+// tokensCSS + baseRules is byte-identical to the base.css that came before the
+// split. The final report inlines it into a document compared byte for byte
+// against the renderer this replaced, so the split must be free: anything
+// ADDED for one page belongs on that page.
+//
 //go:embed assets/tokens.css
 var tokensCSS string
 

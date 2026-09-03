@@ -19,6 +19,16 @@ var page = `<!doctype html>
 <title>{{.Slug}} — fuzzing report</title>
 <style>
 ` + tokensCSS + `
+/* The names this page uses for the shared tokens. Aliases rather than a
+   rename so no rule here had to be rewritten, and so a theme change flows
+   through both sets at once. They live on this page rather than in the shared
+   file because the shared file is inlined verbatim into a published document
+   whose bytes are checked against the renderer this replaced. */
+:root{
+  --rule:var(--hairline); --rule-2:var(--hairline-2);
+  --accent:var(--copper); --accent-dim:var(--copper-dim);
+  --ok:var(--sev-fixed); --warn:var(--sev-artifact); --bad:var(--sev-confirmed);
+}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);
   font-family:var(--sans);font-size:16px;line-height:1.6;

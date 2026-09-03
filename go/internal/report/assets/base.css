@@ -1,15 +1,3 @@
-/* pg-fuzz report design system.
- *
- * SHARED by every report: the per-run snapshot (render-final-report.py) and
- * the campaign HEAD index (campaign-index.py). It lived in ~/pgfuzz as a
- * fragment extracted from an old report -- outside the repo, unversioned, and
- * each renderer then added its own near-identical table rules. Two pages that
- * are meant to look like one product drifted apart every time either changed.
- *
- * Inlined at render time rather than linked: artifact pages run under a CSP
- * that blocks external stylesheets, and an archived report must still render
- * years later from a directory with no network.
- */
   * { box-sizing: border-box; }
 
   body {

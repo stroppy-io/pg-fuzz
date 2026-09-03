@@ -1,16 +1,14 @@
-/* pg-fuzz report design system -- THE TOKENS.
+/* pg-fuzz report design system.
  *
- * Split out of base.css because the two pages did not in fact share it. The
- * history index used base.css; the per-run report carried its own copy of the
- * same palette under different names -- --accent for --copper, --rule for
- * --hairline, --bad for --sev-confirmed (the identical hex, twice, in two
- * files) -- and a different paper colour entirely. base.css opened by saying
- * the sheet exists so "two pages that are meant to look like one product"
- * cannot drift, while they were drifting.
+ * SHARED by every report: the per-run snapshot (render-final-report.py) and
+ * the campaign HEAD index (campaign-index.py). It lived in ~/pgfuzz as a
+ * fragment extracted from an old report -- outside the repo, unversioned, and
+ * each renderer then added its own near-identical table rules. Two pages that
+ * are meant to look like one product drifted apart every time either changed.
  *
- * Only the tokens are shared. Each page keeps its own layout rules, because
- * they lay out genuinely different things; what must not differ is the
- * palette and the type, which is what makes two pages one product.
+ * Inlined at render time rather than linked: artifact pages run under a CSP
+ * that blocks external stylesheets, and an archived report must still render
+ * years later from a directory with no network.
  */
   :root {
     --paper:      #eceff3;
@@ -90,15 +88,3 @@
     --sev-open:      #2c5b8a;
   }
 
-  /* The names the per-run report uses for the same things. Aliases rather
-     than a rename so neither sheet's rules had to be rewritten, and so a
-     theme change flows through both sets at once. */
-  :root {
-    --rule:       var(--hairline);
-    --rule-2:     var(--hairline-2);
-    --accent:     var(--copper);
-    --accent-dim: var(--copper-dim);
-    --ok:         var(--sev-fixed);
-    --warn:       var(--sev-artifact);
-    --bad:        var(--sev-confirmed);
-  }

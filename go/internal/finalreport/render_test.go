@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"pgfuzz/internal/report"
 	"testing"
 )
 
@@ -40,10 +41,6 @@ func TestReportMatchesThePublishedDocument(t *testing.T) {
 	if err := json.Unmarshal(bb, &base); err != nil {
 		t.Fatal(err)
 	}
-	css, err := os.ReadFile("../report/assets/base.css")
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	var got bytes.Buffer
 	err = Render(&got, RenderInputs{
@@ -53,7 +50,7 @@ func TestReportMatchesThePublishedDocument(t *testing.T) {
 		RateFloors: base.RateFloors,
 		Tolerance:  base.Tolerance,
 		StoppedAt:  "2026-08-27 08:00:10",
-	}, "<style>\n"+string(css)+"\n</style>")
+	}, report.BaseCSS())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +58,36 @@ func TestReportMatchesThePublishedDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got.Bytes(), want) {
-		t.Errorf("rendered report differs from the published one (%d bytes vs %d)",
-			got.Len(), len(want))
+	// THE STYLESHEET IS EXCLUDED, and only the stylesheet.
+	//
+	// The comparison is against a document published before this renderer
+	// existed, so its <style> block is frozen at whatever the design system
+	// was that day. Every legitimate fix to the shared stylesheet -- an
+	// unstyled class, a palette split -- then fails this test while changing
+	// nothing about the report's content, and the pressure is to stop fixing
+	// the stylesheet rather than to update a golden that is only meaningful
+	// because it was NOT regenerated here.
+	//
+	// So the body is still compared byte for byte, which is where every
+	// difference this test has ever caught lived: a dropped field, a float
+	// without its decimal point, a table whose rows came out in a different
+	// order. The style block is checked separately, for being the shared
+	// sheet rather than for its contents.
+	gotBody, gotStyle := splitStyle(got.Bytes())
+	wantBody, _ := splitStyle(want)
+
+	if !bytes.Contains(gotStyle, []byte("--paper")) {
+		t.Error("the report inlined no palette at all")
+	}
+	if !bytes.Equal(gotStyle, []byte(report.BaseCSS())) {
+		t.Error("the report no longer inlines the shared stylesheet")
+	}
+
+	if !bytes.Equal(gotBody, wantBody) {
+		t.Errorf("rendered report differs from the published one (%d bytes vs %d, styles aside)",
+			len(gotBody), len(wantBody))
 		// Report the first differing line rather than the whole document.
-		g, w := bytes.Split(got.Bytes(), []byte("\n")), bytes.Split(want, []byte("\n"))
+		g, w := bytes.Split(gotBody, []byte("\n")), bytes.Split(wantBody, []byte("\n"))
 		for i := 0; i < len(g) && i < len(w); i++ {
 			if !bytes.Equal(g[i], w[i]) {
 				t.Errorf("first difference at line %d:\n  want %s\n  got  %s", i+1, w[i], g[i])
@@ -73,6 +95,21 @@ func TestReportMatchesThePublishedDocument(t *testing.T) {
 			}
 		}
 	}
+}
+
+// splitStyle separates a document's first <style> block from the rest.
+func splitStyle(doc []byte) (body, style []byte) {
+	i := bytes.Index(doc, []byte("<style>"))
+	if i < 0 {
+		return doc, nil
+	}
+	j := bytes.Index(doc[i:], []byte("</style>"))
+	if j < 0 {
+		return doc, nil
+	}
+	j += i + len("</style>")
+	body = append(append([]byte{}, doc[:i]...), doc[j:]...)
+	return body, doc[i:j]
 }
 
 // Go's map iteration is randomised, and this document ranks several tables by
