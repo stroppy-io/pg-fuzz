@@ -174,6 +174,7 @@ type ManifestEntry struct {
 	Targets      []string `json:"targets"`
 	Plugins      []string `json:"plugins,omitempty"`
 	PluginsFail  []string `json:"plugins_failed,omitempty"`
+	Patches      []string `json:"patches,omitempty"`
 	SeededInputs int      `json:"seeded_inputs"`
 	BuildOK      bool     `json:"build_ok"`
 	Note         string   `json:"note,omitempty"`
@@ -318,4 +319,39 @@ func AnyLiveCampaign(root string) (slug string, pid int) {
 		}
 	}
 	return "", 0
+}
+
+// Provenance fills the parts of a manifest entry that must describe the build
+// THIS campaign performed, rather than whatever the workspace last recorded.
+//
+// WHY THIS EXISTS. The entry used to take its sha from workspace.conf, which
+// is written by a build -- any build, at any time in the past. A workspace
+// built during an earlier campaign and merely REUSED by this one therefore
+// carried the earlier commit into a sealed manifest, and the verification
+// campaign of 2026-09-03 caught it: gt-pg17 was recorded against 61636c17b3
+// while both workspaces had in fact compiled 4639b6cfe3. A sealed slug is the
+// document that makes a run re-measurable by somebody who was not here; a
+// commit in it that was never built is worse than no commit at all, because it
+// looks like provenance.
+//
+// BUILD-INFO.json is written by build.sh inside the container at the moment
+// the tree is compiled, so it is the only record of what was actually built.
+// The conf remains the fallback for a build old enough to predate it.
+//
+// Plugins gain the sha they were built from, which is what this type's
+// documentation has always promised and the code did not do: bare names say a
+// plugin was present, not which one.
+func (e *ManifestEntry) Provenance(builtSHA, confSHA string, pins map[string]string) {
+	e.SHA = builtSHA
+	if e.SHA == "" {
+		// Only when the build left no record; a campaign that reused a build
+		// from before BUILD-INFO existed is still better described by the conf
+		// than by an empty field.
+		e.SHA = confSHA
+	}
+	for i, name := range e.Plugins {
+		if sha := pins[name]; sha != "" {
+			e.Plugins[i] = name + "@" + sha
+		}
+	}
 }

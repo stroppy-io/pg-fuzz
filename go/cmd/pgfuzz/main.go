@@ -1202,6 +1202,29 @@ type wsList []string
 func (w *wsList) String() string     { return strings.Join(*w, ",") }
 func (w *wsList) Set(v string) error { *w = append(*w, v); return nil }
 
+// campaignProvenance is what the build in this campaign's own slug recorded.
+//
+// Read from the slug, never from the shared workspace: a sealed campaign that
+// reused a build must still describe the build it ran, and BUILD-INFO.json in
+// the campaign's build directory is the only place that fact is written down.
+func campaignProvenance(slugDir, ws string) (sha string, pins map[string]string) {
+	bi := archive.ReadBuildInfo(filepath.Join(
+		campaign.BuildDir(slugDir, ws), "BUILD-INFO.json"))
+	return bi.PGRefSHA, bi.Plugins
+}
+
+// campaignPatches names the workspace patch series with the hash of each file,
+// so a sealed manifest says WHICH patch was applied and not merely that one
+// was. A patch is part of the system under test; a run against a patched tree
+// that does not record the patch is not reproducible.
+func campaignPatches(c interface{ Get(string) string }) []string {
+	var out []string
+	for _, pf := range strings.Fields(c.Get("patch")) {
+		out = append(out, filepath.Base(pf)+"@"+inventory.ShaFile(pf))
+	}
+	return out
+}
+
 func cmdCampaign(argv []string) int {
 	fs := flag.NewFlagSet("campaign", flag.ExitOnError)
 	var wss wsList
@@ -1317,12 +1340,16 @@ func cmdCampaign(argv []string) int {
 				fmt.Fprintf(os.Stderr,
 					"\npgfuzz: !! %s WILL NOT BE FUZZED: %v\n\n", c.Name, err)
 				b, f := pluginOutcome(campaign.BuildLog(slugDir, c.Name))
-				mentries = append(mentries, campaign.ManifestEntry{
-					Workspace: c.Name, Ref: c.Ref, SHA: c.Get("sha"),
+				me := campaign.ManifestEntry{
+					Workspace: c.Name, Ref: c.Ref,
 					Sanitizer: c.Sanitizer, Engine: c.Get("engine"),
 					Plugins: b, PluginsFail: f, BuildOK: false,
-					Note: "build failed; excluded from this campaign",
-				})
+					Patches: campaignPatches(c),
+					Note:    "build failed; excluded from this campaign",
+				}
+				bsha, bpins := campaignProvenance(slugDir, c.Name)
+				me.Provenance(bsha, c.Get("sha"), bpins)
+				mentries = append(mentries, me)
 				continue
 			}
 		}
@@ -1352,12 +1379,15 @@ func cmdCampaign(argv []string) int {
 		}
 
 		built, failed := pluginOutcome(campaign.BuildLog(slugDir, c.Name))
-		mentries = append(mentries, campaign.ManifestEntry{
-			Workspace: c.Name, Ref: c.Ref, SHA: c.Get("sha"),
+		me := campaign.ManifestEntry{
+			Workspace: c.Name, Ref: c.Ref,
 			Sanitizer: c.Sanitizer, Engine: c.Get("engine"), Key: c.Get("key"),
 			Targets: ts, Plugins: built, PluginsFail: failed, BuildOK: true,
-			SeededInputs: seeded,
-		})
+			Patches: campaignPatches(c), SeededInputs: seeded,
+		}
+		bsha, bpins := campaignProvenance(slugDir, c.Name)
+		me.Provenance(bsha, c.Get("sha"), bpins)
+		mentries = append(mentries, me)
 		maxLen := 4096
 		if v := c.Get("max_len"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
