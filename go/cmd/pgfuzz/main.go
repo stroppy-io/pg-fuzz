@@ -4358,6 +4358,16 @@ func cmdPlateau(argv []string) int {
 	return plateau.Watch(ctx, r.WS, wss, o)
 }
 
+// matchesAny reports whether a name matches any of the globs.
+func matchesAny(name string, pats []string) bool {
+	for _, p := range pats {
+		if ok, _ := filepath.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // cmdTriageReport generates the reporting triage document from the record.
 func cmdTriageReport(argv []string) int {
 	fs := flag.NewFlagSet("triage-report", flag.ExitOnError)
@@ -4369,6 +4379,9 @@ func cmdTriageReport(argv []string) int {
 	var wsPat wsList
 	fs.Var(&wsPat, "ws", "only findings naming a workspace matching this glob\n"+
 		"    	(repeatable, e.g. -ws 'pg17-10-ext-*')")
+	var notPat wsList
+	fs.Var(&notPat, "not", "drop findings whose directory name matches this glob\n"+
+		"    	(repeatable, e.g. -not 'orioledb-*')")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
@@ -4389,6 +4402,14 @@ func cmdTriageReport(argv []string) int {
 	scoped := map[string][]string{}
 	var dropped int
 	for _, n := range triage.FindingDirs(findingsRoot) {
+		// DROP BY NAME, when asked. A run that did not build a component has
+		// no use for findings filed against it, and the directory name is the
+		// only stable handle on that -- an area is assigned by triage and can
+		// be overturned, as one of these has been.
+		if matchesAny(n, notPat) {
+			dropped++
+			continue
+		}
 		// SCOPE BY WORKSPACE, when asked. Every report over this directory
 		// prints all of it under whatever heading it was given, so a campaign
 		// that built no storage engine still listed eight storage-engine
@@ -4422,6 +4443,10 @@ func cmdTriageReport(argv []string) int {
 		b.WriteString("> write-up records which campaign produced it, so this is inference, not\n")
 		b.WriteString("> provenance: a finding whose author did not name a workspace cannot be\n")
 		b.WriteString("> placed and is absent here.\n>\n")
+		if len(notPat) > 0 {
+			fmt.Fprintf(&b, "> Findings matching %s are excluded by name.\n>\n",
+				strings.Join(notPat, ", "))
+		}
 		names := make([]string, 0, len(scoped))
 		for n := range scoped {
 			names = append(names, n)
