@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"pgfuzz/internal/findings"
 )
 
 // Masked is what the gates chose NOT to fail on.
@@ -214,8 +216,6 @@ type Findings struct {
 var (
 	reDated     = regexp.MustCompile(`^20\d\d-`)
 	reTargetTok = regexp.MustCompile(`\b([a-z_]+_fuzzer)\b`)
-	reFoundBy   = regexp.MustCompile(`\*\*Found by:\*\*\s*(.+)`)
-	reFoundTgt  = regexp.MustCompile(`\*\*Found by:\*\*\s*` + "`?" + `([a-z_]+_fuzzer)` + "`?")
 )
 
 // isFinding decides whether a directory under FINDINGS is one.
@@ -300,8 +300,10 @@ func GatherFindings(root string, known map[string]bool) Findings {
 		// The explicit field is AUTHORITATIVE, including when it says the
 		// finding is systemic or unattributable. Only fall back to inferring
 		// from prose for write-ups that predate the convention.
-		if m := reFoundBy.FindStringSubmatch(txt); m != nil {
-			v := strings.TrimSpace(m[1])
+		// ONE PARSER, shared with the findings package. Two regexes for one
+		// field agreed only because every write-up on disk happens to use the
+		// form both accept.
+		if v := findings.Field(txt, "Found by"); v != "" {
 			if strings.HasPrefix(v, "systemic") {
 				f.Systemic++
 				continue
@@ -312,7 +314,7 @@ func GatherFindings(root string, known map[string]bool) Findings {
 			}
 		}
 		tgt := ""
-		if m := reFoundTgt.FindStringSubmatch(txt); m != nil {
+		if m := reTargetTok.FindStringSubmatch(findings.Field(txt, "Found by")); m != nil {
 			tgt = m[1]
 		}
 		if tgt == "" {

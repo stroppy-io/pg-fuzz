@@ -120,6 +120,27 @@ var (
 	reMDBold = regexp.MustCompile(`\*\*`)
 )
 
+// Field reads one "**Name:**" line out of a write-up.
+//
+// ONE PARSER FOR ONE FORMAT. This package and the final report each had their
+// own regex for the same field, and they did not accept the same text: this
+// one tolerates the colon inside or outside the bold and anchors to the start
+// of a line; the report's required "**Found by:**" exactly and matched
+// anywhere, including inside a quoted block where a write-up cites another
+// finding. All 25 write-ups on disk happen to use the form both accept, so
+// nothing is wrong today -- and a document that agrees with another only by
+// coincidence is not a document you can rely on.
+//
+// Anchored, deliberately: a field is a line, not a phrase.
+func Field(md, name string) string {
+	re := regexp.MustCompile(`(?m)^\*\*` + regexp.QuoteMeta(name) + `:?\*\*:?\s*(.+)$`)
+	m := re.FindStringSubmatch(md)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(reMDBold.ReplaceAllString(m[1], ""))
+}
+
 func readMeta(dir string, f *Finding) {
 	b, err := os.ReadFile(filepath.Join(dir, "README.md"))
 	if err != nil {
