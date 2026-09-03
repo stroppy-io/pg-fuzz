@@ -84,7 +84,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz ws     [-new NAME -ref R [-flavor F] [-sanitizer S] [-plugins "..."]]
                  with no arguments, lists every workspace
   pgfuzz index  [-slug NAME] [-o FILE]
-  pgfuzz bundle -slug NAME [-cov <ws>] [-no-corpus] [-out DIR]
+  pgfuzz bundle -slug NAME [-cov <ws>] [-no-corpus] [-out DIR] [-force]
   pgfuzz stop   [-w <ws>]
   pgfuzz watchdog [-grace S] [-interval S] [-n]
   pgfuzz plateau -w <ws> [-w <ws>...] [-window M] [-once]
@@ -2866,6 +2866,7 @@ func cmdBundle(argv []string) int {
 	noCorpus := fs.Bool("no-corpus", false, "omit corpus archives")
 	outDir := fs.String("out", "", "where the bundle lands (default: campaigns/<slug>)")
 	baseline := fs.String("baseline", "", "ubsan accept-list for the gates")
+	force := fs.Bool("force", false, "bundle even while the campaign is still running")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil || *slug == "" {
 		fs.Usage()
@@ -2873,6 +2874,25 @@ func cmdBundle(argv []string) int {
 	}
 	r := paths.Resolve()
 	campDir := filepath.Join(r.Campaigns(), *slug)
+
+	// A REPORT IS NOT BUILT OVER A MOVING TARGET.
+	//
+	// The old bundle warned and recorded the fact in its manifest; the archive
+	// refused outright, because an archive of a campaign still adding to
+	// itself is an archive of nothing. Coverage is the sharpest case: measured
+	// against a corpus that is growing right now, the number belongs to no
+	// run. -force is for the case where somebody knows better.
+	if pid := campaign.LiveDriver(campDir); pid > 0 && !*force {
+		fmt.Fprintf(os.Stderr,
+			"pgfuzz: campaign %s is still running (pid %d) -- bundle a FINISHED one,\n"+
+				"  or pass -force to bundle a moving target and have it recorded as such\n",
+			*slug, pid)
+		return 2
+	} else if pid > 0 {
+		fmt.Fprintf(os.Stderr,
+			"pgfuzz: !! bundling %s while it is still running (pid %d);"+
+				" the numbers describe a moving target\n", *slug, pid)
+	}
 	if *outDir == "" {
 		*outDir = campDir
 	}

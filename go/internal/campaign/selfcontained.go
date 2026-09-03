@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"time"
 )
 
@@ -272,4 +273,49 @@ func Building(slugDir string, within time.Duration) []string {
 func HasBuild(slugDir, ws string) bool {
 	hits, _ := filepath.Glob(filepath.Join(BuildDir(slugDir, ws), "*_fuzzer"))
 	return len(hits) > 0
+}
+
+// LiveDriver reports the pid of a campaign still running in this slug, or 0.
+//
+// BY THE PID, not by the marker file. A marker outlives kill -9, so trusting
+// it reports a dead campaign as running forever -- and trusting its ABSENCE
+// is worse, since the marker is written before the build phase and a reader
+// that only checks for the file would call a building campaign idle.
+func LiveDriver(slugDir string) int {
+	b, err := os.ReadFile(filepath.Join(slugDir, "live", "campaign.json"))
+	if err != nil {
+		return 0
+	}
+	var st State
+	if json.Unmarshal(b, &st) != nil || st.PID <= 0 {
+		return 0
+	}
+	if syscall.Kill(st.PID, 0) != nil {
+		return 0
+	}
+	return st.PID
+}
+
+// AnyLiveCampaign returns the slug of any campaign still running under root.
+//
+// A REPORT MUST NOT BE BUILT OVER A MOVING TARGET. The old bundle warned and
+// wrote the fact into its manifest; the archive refused outright, because an
+// archive of a campaign that is still adding to itself is not an archive of
+// anything. Coverage is the sharpest case: measuring it against a corpus that
+// grew twelve hours ago, or is growing right now, produces a number that
+// belongs to no run.
+func AnyLiveCampaign(root string) (slug string, pid int) {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return "", 0
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		if p := LiveDriver(filepath.Join(root, e.Name())); p > 0 {
+			return e.Name(), p
+		}
+	}
+	return "", 0
 }
