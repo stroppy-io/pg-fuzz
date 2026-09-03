@@ -3218,6 +3218,12 @@ func cmdBundle(argv []string) int {
 	// alone reports whatever the last gather saw.
 	series := campaign.Series{Path: filepath.Join(campDir, "series.jsonl")}
 	d, err := report.Gather(*slug, series, filepath.Join(r.WS, "FINDINGS"), cov)
+	// The same provenance the standalone report carries. Rendering the bundle
+	// through a second call site is how the section came to be missing from
+	// exactly the copy that gets handed to somebody else.
+	if man, merr := campaign.ReadManifest(campDir); merr == nil {
+		d.WithManifest(man)
+	}
 	if err != nil {
 		m.Add("gather", false, err.Error())
 	} else {
@@ -3237,6 +3243,37 @@ func cmdBundle(argv []string) int {
 		m.Add("series", false, err.Error())
 	} else {
 		m.Add("series", true, "series.jsonl")
+	}
+
+	// THE DOCUMENTS THE GATES AND THE COVERAGE WERE JUDGED AGAINST.
+	//
+	// The bundle recorded that no gate failed and did not ship the floors
+	// those gates compared against, so the claim could not be rechecked by
+	// whoever received it -- the one thing a bundle exists for. Same for the
+	// coverage series: a single union percentage says nothing about whether
+	// coverage was climbing or flat.
+	//
+	// Each is named in the manifest whether or not it was found. A document
+	// that is absent must SAY it is absent; silently shipping nine of ten and
+	// listing nine is how a bundle comes to look complete.
+	scripts := filepath.Join(r.Home, "scripts")
+	for _, doc := range []struct{ name, path, why string }{
+		{"ratchet-baseline.json", filepath.Join(scripts, "ratchet-baseline.json"),
+			"the floors every gate in this campaign compared against"},
+		{"ratchet-series.jsonl", filepath.Join(scripts, "ratchet-series.jsonl"),
+			"how those floors moved, run by run"},
+		{"coverage-series.jsonl", filepath.Join(scripts, "coverage-series.jsonl"),
+			"coverage over time, which one union percentage cannot show"},
+		{"coverage-components.jsonl", filepath.Join(scripts, "coverage-components.jsonl"),
+			"coverage split by component"},
+		{"campaign-stopped.marker", finalreport.MarkerPath(r.WS),
+			"when the run stopped, and each corpus size at that moment"},
+	} {
+		if err := bundle.CopyInto(stage, doc.name, doc.path); err != nil {
+			m.Add(doc.name, false, "not shipped: "+err.Error())
+		} else {
+			m.Add(doc.name, true, doc.why)
+		}
 	}
 
 	if b := census.New(); true {
