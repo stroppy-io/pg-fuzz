@@ -215,7 +215,8 @@ func Load(campaignsRoot, slug string) Model {
 		seenTarget[e] = true
 	}
 
-	rows, err := (campaign.Series{Path: filepath.Join(dir, "series.jsonl")}).Read()
+	// Cached: this runs once a second and the file changes every few minutes.
+	rows, err := (campaign.Series{Path: filepath.Join(dir, "series.jsonl")}).ReadCached()
 	if err != nil {
 		if len(m.Building) == 0 && len(byWS) == 0 {
 			m.Err = "no series yet"
@@ -460,29 +461,25 @@ func processAlive(pid int) bool {
 }
 
 // workspacesInSeries lists the workspaces of one campaign, in first-seen order.
+//
+// Through the cached read, because this is the SECOND full parse of the same
+// file in the same frame: the dashboard read the series once for its rows and
+// again here, once a second, for the whole length of a campaign.
 func workspacesInSeries(path, slug string) []string {
-	f, err := os.Open(path)
+	rows, err := (campaign.Series{Path: path}).ReadCached()
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
 	seen := map[string]bool{}
 	var out []string
-	dec := json.NewDecoder(f)
-	for {
-		var r struct {
-			WS string `json:"ws"`
-		}
-		if err := dec.Decode(&r); err != nil {
-			break
-		}
-		if r.WS == "" || seen[r.WS] || !strings.HasPrefix(r.WS, slug) {
+	for _, r := range rows {
+		if r.Workspace == "" || seen[r.Workspace] ||
+			!strings.HasPrefix(r.Workspace, slug) {
 			continue
 		}
-		seen[r.WS] = true
-		out = append(out, r.WS)
+		seen[r.Workspace] = true
+		out = append(out, r.Workspace)
 	}
-	sort.Strings(out)
 	return out
 }
 
