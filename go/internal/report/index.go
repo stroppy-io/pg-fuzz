@@ -87,6 +87,8 @@ type RunRow struct {
 	Delta      int
 	HasDelta   bool
 	Coverage   string // "12.34%" or ""
+	CovTargets int    // how many targets that union covered
+	CovStale   bool   // the newest measurement produced nothing; this is older
 	Reproducer int
 
 	HasReport bool
@@ -229,8 +231,8 @@ func GatherIndex(root, slug string) (IndexData, error) {
 		for _, n := range m.Reproducers {
 			row.Reproducer += n
 		}
-		if cov, ok := coverageOf(rd); ok {
-			row.Coverage = cov
+		if cov, tgts, stale, ok := coverageOf(rd); ok {
+			row.Coverage, row.CovTargets, row.CovStale = cov, tgts, stale
 		}
 		row.Acks, row.Degraded, row.RegimeSkipped = maskedOf(rd)
 		row.SkippedTargets = len(union(row.RegimeSkipped))
@@ -297,32 +299,57 @@ func allDigits(s string) bool {
 }
 
 // coverageOf reads the newest line of the archived union series.
-func coverageOf(runDir string) (string, bool) {
+// coverageOf is a run's union coverage, from the newest measurement it made.
+//
+// THE NEWEST, not the newest that happened to work. The old reading took the
+// last record with a non-zero line count, so a measurement that produced
+// nothing left the PREVIOUS one standing in the column with nothing to say it
+// was older -- coverage attributed to a run that had not managed to measure
+// any. Falling back is still better than an empty column, but it has to say
+// so.
+//
+// The target count travels with it because a union over 23 targets and a union
+// over 46 are not the same measurement, and printed as a bare percentage they
+// look identical. One run's file here holds both. It rides in the cell's title
+// rather than its text: the rendered cells are checked against the Python this
+// replaced, and widening a column is a change to the page, not a fix to it.
+func coverageOf(runDir string) (cov string, targets int, stale bool, ok bool) {
 	f, err := os.Open(filepath.Join(runDir, "series", "coverage-union.jsonl"))
 	if err != nil {
-		return "", false
+		return "", 0, false, false
 	}
 	defer f.Close()
-	dec := json.NewDecoder(f)
-	var last struct {
-		Lines struct{ Count, Covered int } `json:"lines"`
+
+	type rec struct {
+		Lines   struct{ Count, Covered int } `json:"lines"`
+		Targets int                          `json:"targets"`
 	}
-	found := false
+	var all []rec
+	dec := json.NewDecoder(f)
 	for {
-		var rec struct {
-			Lines struct{ Count, Covered int } `json:"lines"`
-		}
-		if err := dec.Decode(&rec); err != nil {
+		var r rec
+		if err := dec.Decode(&r); err != nil {
 			break
 		}
-		if rec.Lines.Count > 0 {
-			last, found = rec, true
+		all = append(all, r)
+	}
+	if len(all) == 0 {
+		return "", 0, false, false
+	}
+	pct := func(r rec) string {
+		return fmt.Sprintf("%.2f%%", 100*float64(r.Lines.Covered)/float64(r.Lines.Count))
+	}
+	if last := all[len(all)-1]; last.Lines.Count > 0 {
+		return pct(last), last.Targets, false, true
+	}
+	// The newest measurement produced nothing. Show the newest that did, and
+	// mark it, rather than presenting it as this run's result.
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Lines.Count > 0 {
+			return pct(all[i]), all[i].Targets, true, true
 		}
 	}
-	if !found {
-		return "", false
-	}
-	return fmt.Sprintf("%.2f%%", 100*float64(last.Lines.Covered)/float64(last.Lines.Count)), true
+	return "", 0, false, false
 }
 
 // maskedOf reads what a run's gates chose not to fail on, from its archived
@@ -525,7 +552,7 @@ Redesigning a report changes its bytes; it must not change what a run was.</p></
 <td class="cfg{{if .Changed}} warn{{end}}"><code>{{.Fingerprint}}</code>{{if .Changed}} &#9888;{{end}}{{if .Redefined}} &#8853;{{end}}</td>
 <td>{{if .Corpus}}{{comma .Corpus}}{{else}}&mdash;{{end}}</td>
 <td class="{{deltaClass .}}">{{if .HasDelta}}{{signed .Delta}}{{else}}&mdash;{{end}}</td>
-<td>{{if .Coverage}}{{.Coverage}}{{else}}&mdash;{{end}}</td>
+<td{{if .CovStale}} class="warn"{{end}}{{if .CovTargets}} title="union over {{.CovTargets}} targets"{{end}}>{{if .Coverage}}{{.Coverage}}{{if .CovStale}} &#9888;{{end}}{{else}}&mdash;{{end}}</td>
 <td>{{if .Reproducer}}{{comma .Reproducer}}{{else}}&mdash;{{end}}</td>
 <td>{{if .HasReport}}<a href="{{.Name}}/report/index.html">open</a>{{else}}none{{end}}</td>
 </tr>
