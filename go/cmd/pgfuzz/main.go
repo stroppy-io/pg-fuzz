@@ -1464,8 +1464,8 @@ func cmdCampaign(argv []string) int {
 		// said why: updating first raises the floor to include the round being
 		// judged, so nothing can ever regress. Without a caller the ratchet was
 		// a gate nobody ran.
-		AfterSweep: func(e campaign.Entry, round int, complete bool) {
-			gateAfterSweep(r, e, round, *jobs, complete)
+		AfterSweep: func(e campaign.Entry, round int, complete bool, notJudgeable string) {
+			gateAfterSweep(r, e, round, *jobs, notJudgeable)
 		},
 	})
 	if err != nil {
@@ -5073,9 +5073,17 @@ func humanBytes(n int64) string {
 // findings: a workspace that got through six of its targets has not earned a
 // verdict on the other seventeen. The floors are not raised either, since a
 // partial round is not evidence that a higher floor is sustainable.
-func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, complete bool) {
-	if !complete {
-		fmt.Fprintf(os.Stderr, "  gates skipped: the sweep was cut short\n")
+// gateAfterSweep runs the ratchet, unless the round cannot be judged.
+//
+// notJudgeable names the reason, and there is more than one. A round that
+// never finished is the obvious case. The other is a round where EVERY target
+// ran and one of them was stopped part-way by the disk floor: nothing above
+// notices, the numbers look complete, and the ratchet reads an artificially
+// low slice as a regression in the target rather than as a fact about the
+// filesystem.
+func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable string) {
+	if notJudgeable != "" {
+		fmt.Fprintf(os.Stderr, "  gates skipped: %s\n", notJudgeable)
 		return
 	}
 	self, err := os.Executable()

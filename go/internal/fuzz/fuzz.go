@@ -87,6 +87,11 @@ type Request struct {
 
 // Result is what the slice produced.
 type Result struct {
+	// Target the result belongs to. A sweep returns a slice of these and the
+	// caller could not say which was which, so anything reported per-target
+	// had to be inferred from position -- which stops being true the moment a
+	// target is skipped.
+	Target     string
 	Elapsed    time.Duration
 	LogPath    string
 	CorpusFrom int
@@ -274,6 +279,7 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	close(stopGuard)
 
 	res := Result{
+		Target:     r.Target,
 		Elapsed:    time.Since(start),
 		LogPath:    logPath,
 		CorpusFrom: before,

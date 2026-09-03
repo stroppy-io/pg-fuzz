@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,12 @@ type Config struct {
 	// SKIPPED WHEN THE SWEEP WAS CUT SHORT. Bounding the clock must not
 	// manufacture findings: a workspace that only got through six of its
 	// targets has not earned a verdict on the other seventeen.
-	AfterSweep func(e Entry, round int, complete bool)
+	// judgeable says why this round must NOT be gated, or "" when it may be.
+	// Two different reasons reach it -- a round that never finished, and a
+	// round the disk floor cut a slice out of -- and both must stop the
+	// ratchet, which otherwise reads an artificially low slice as a
+	// regression in the target rather than a fact about the filesystem.
+	AfterSweep func(e Entry, round int, complete bool, notJudgeable string)
 
 	// Productivity is ws -> target -> newest new_units, from the ratchet
 	// series. Empty means "order by rotation alone", which is what happens
@@ -298,9 +304,38 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 		// judges only what it was handed.
 		say("  SHORT ROUND: %d of %d targets never ran", len(e.Targets)-len(res), len(e.Targets))
 	}
-	if c.AfterSweep != nil {
-		c.AfterSweep(e, round, complete)
+	// A COMPLETE ROUND CAN STILL BE UNJUDGEABLE. Every target ran, so nothing
+	// above notices, while one of them was stopped part-way by the disk floor
+	// and produced a number that says nothing about the target.
+	var cut []string
+	for _, r := range res {
+		if r.DiskStop {
+			cut = append(cut, r.Target)
+		}
 	}
+	if len(cut) > 0 {
+		say("  DISK FLOOR cut %d slice(s): %s", len(cut), strings.Join(cut, " "))
+	}
+	if c.AfterSweep != nil {
+		c.AfterSweep(e, round, complete, reasonNotJudgeable(complete, cut))
+	}
+}
+
+// reasonNotJudgeable says why a round must not be gated, or "" when it may be.
+//
+// TWO REASONS, and the second is the one that hides. A round that never
+// finished is visible from its own count. A round where every target ran and
+// one slice was stopped part-way by the disk floor looks complete from every
+// angle, and its low number is a fact about the filesystem that the ratchet
+// would report as a regression in the target.
+func reasonNotJudgeable(complete bool, diskCut []string) string {
+	if !complete {
+		return "the sweep was cut short"
+	}
+	if len(diskCut) > 0 {
+		return "the disk floor cut " + strings.Join(diskCut, ", ")
+	}
+	return ""
 }
 
 func rotate(in []Entry, by int) []Entry {

@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,7 +22,7 @@ func TestAfterSweepRunsForEachWorkspace(t *testing.T) {
 			{Name: "w2", Dir: "/nonexistent/w2", Targets: []string{"a_fuzzer"}},
 		},
 		OnDeadline: FinishRound,
-		AfterSweep: func(e Entry, round int, complete bool) { seen = append(seen, e.Name) },
+		AfterSweep: func(e Entry, round int, complete bool, _ string) { seen = append(seen, e.Name) },
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -52,7 +53,7 @@ func TestAfterSweepReportsAShortRound(t *testing.T) {
 		Entries: []Entry{{Name: "w1", Dir: "/nonexistent/w1",
 			Targets: []string{"a_fuzzer", "b_fuzzer", "c_fuzzer"}}},
 		OnDeadline: FinishRound,
-		AfterSweep: func(e Entry, round int, ok bool) { complete = append(complete, ok) },
+		AfterSweep: func(e Entry, round int, ok bool, _ string) { complete = append(complete, ok) },
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -63,5 +64,55 @@ func TestAfterSweepReportsAShortRound(t *testing.T) {
 	}
 	if complete[0] {
 		t.Error("a sweep that ran none of its targets was reported as complete")
+	}
+}
+
+// A COMPLETE ROUND CAN STILL BE UNJUDGEABLE.
+//
+// Every target ran, so nothing above notices -- while one slice was stopped
+// part-way by the disk floor and produced a number that says nothing about the
+// target. Gating on "complete" alone hands that number to the ratchet, which
+// reads it as a regression in the target rather than as a fact about the
+// filesystem.
+func TestDiskCutRoundIsNotJudgeable(t *testing.T) {
+	var gotComplete bool
+	var gotReason string
+	seen := 0
+
+	c := Config{
+		AfterSweep: func(e Entry, round int, complete bool, notJudgeable string) {
+			seen++
+			gotComplete, gotReason = complete, notJudgeable
+		},
+	}
+	// Stand in for what runSweep computes: the round finished, and one of its
+	// slices was cut.
+	reason := reasonNotJudgeable(true, []string{"jsonb_fuzzer"})
+	if c.AfterSweep != nil {
+		c.AfterSweep(Entry{Name: "w"}, 1, true, reason)
+	}
+
+	if seen != 1 {
+		t.Fatalf("hook called %d times", seen)
+	}
+	if !gotComplete {
+		t.Error("the round was complete and was reported otherwise")
+	}
+	if gotReason == "" {
+		t.Error("a complete round with a disk-cut slice was judged anyway")
+	}
+	if !strings.Contains(gotReason, "jsonb_fuzzer") {
+		t.Errorf("the reason does not name the cut slice: %q", gotReason)
+	}
+}
+
+// Nothing wrong means nothing to say, and the gates run.
+func TestCleanRoundIsJudgeable(t *testing.T) {
+	if got := reasonNotJudgeable(true, nil); got != "" {
+		t.Errorf("a clean complete round reported %q; the gates must run", got)
+	}
+	// A short round still stops them, and says which reason it was.
+	if got := reasonNotJudgeable(false, nil); got == "" {
+		t.Error("a short round was judged anyway")
 	}
 }

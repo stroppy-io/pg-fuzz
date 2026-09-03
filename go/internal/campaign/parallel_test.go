@@ -28,7 +28,7 @@ func TestWorkspacesSweepConcurrently(t *testing.T) {
 	c := Config{
 		Hours: 0.0002, PerTarget: 1, Jobs: 1, Parallel: 4,
 		Entries: entries, OnDeadline: FinishRound,
-		AfterSweep: func(e Entry, round int, ok bool) {
+		AfterSweep: func(e Entry, round int, ok bool, _ string) {
 			n := atomic.AddInt64(&inFlight, 1)
 			mu.Lock()
 			if n > peak {
@@ -78,7 +78,7 @@ func TestRoundWaitsForEveryWorkspace(t *testing.T) {
 	}
 	seen := map[int]bool{}
 	var mu sync.Mutex
-	c.AfterSweep = func(e Entry, round int, ok bool) {
+	c.AfterSweep = func(e Entry, round int, ok bool, _ string) {
 		atomic.AddInt64(&running, 1)
 		mu.Lock()
 		// A previous round must be fully drained before this one appears.
