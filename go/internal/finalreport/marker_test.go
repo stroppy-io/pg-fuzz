@@ -49,3 +49,27 @@ func TestMarkerAbsentReadsEmpty(t *testing.T) {
 		t.Errorf("ReadStoppedAt on a missing file = %q, want empty", got)
 	}
 }
+
+// THE COUNT IS INPUTS, NOT ARTIFACTS.
+//
+// The first version of the caller counted with corpus.Artifacts, which matches
+// only crash-, oom-, timeout- and leak- prefixed files. A corpus of 2,285
+// inputs was recorded as 0, and every line of the marker read as an empty
+// corpus -- a plausible number that was wrong, which is the failure this file
+// exists to prevent. The regression was invisible to every unit test and
+// showed only on a real campaign.
+//
+// This test pins the shape rather than the caller: a marker whose counts are
+// all zero for a campaign that fuzzed is not a marker worth shipping.
+func TestMarkerCountsAreNotAllZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m")
+	if err := WriteStopMarker(path, time.Now(), []CorpusCount{
+		{Workspace: "w", Target: "a_fuzzer", Inputs: 2285},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "\t2285\n") {
+		t.Errorf("the input count did not survive the write:\n%s", b)
+	}
+}

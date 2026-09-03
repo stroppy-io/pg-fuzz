@@ -1475,9 +1475,12 @@ func cmdCampaign(argv []string) int {
 			if !t.IsDir() {
 				continue
 			}
-			n := len(corpus.Artifacts(filepath.Join(dir, t.Name())))
+			// Measure, not Artifacts: Artifacts counts crash-, oom-,
+			// timeout- and leak- files only, so a corpus of 2,285 inputs
+			// recorded as 0 -- the marker's whole purpose is the input count.
+			st := corpus.Measure(filepath.Join(dir, t.Name()))
 			counts = append(counts, finalreport.CorpusCount{
-				Workspace: e.Name, Target: t.Name(), Inputs: n,
+				Workspace: e.Name, Target: t.Name(), Inputs: st.Files,
 			})
 		}
 	}
