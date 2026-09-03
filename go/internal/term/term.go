@@ -148,8 +148,10 @@ const (
 	Red    = "\x1b[31m"
 	Green  = "\x1b[32m"
 	Yellow = "\x1b[33m"
-	Blue   = "\x1b[34m"
-	Cyan   = "\x1b[36m"
+	// Reverse marks the selected row, distinct from the live marker.
+	Reverse = "\x1b[7m"
+	Blue    = "\x1b[34m"
+	Cyan    = "\x1b[36m"
 )
 
 // Clip truncates to n visible columns, ignoring escape sequences.

@@ -45,7 +45,7 @@ func Draw(s *term.Screen, m Model, v View, sel int, rows, cols int) {
 	case Detail:
 		drawDetail(s, m, sel)
 	default:
-		drawPanels(s, m, drawGrid(s, m))
+		drawPanels(s, m, drawGrid(s, m, sel))
 	}
 	drawFooter(s, m, v)
 }
@@ -73,7 +73,7 @@ func phaseLabel(m Model) string {
 	return m.Phase
 }
 
-func drawGrid(s *term.Screen, m Model) int {
+func drawGrid(s *term.Screen, m Model, sel int) int {
 	if len(m.Rows) == 0 {
 		s.Line(4, term.Dim+"no campaign here"+term.Reset)
 		return 5
@@ -96,11 +96,16 @@ func drawGrid(s *term.Screen, m Model) int {
 	s.Line(4, term.Bold+head.String()+term.Reset)
 
 	row := 5
-	for _, r := range m.Rows {
+	for i, r := range m.Rows {
 		if row >= s.Rows-2 {
 			break
 		}
 		var b strings.Builder
+		// The SELECTED row, distinct from the "> " live marker. j/k and the
+		// arrows moved a selection nothing drew, so the keys looked broken.
+		if i == sel {
+			b.WriteString(term.Reverse)
+		}
 		// "> " marks the workspace that is working, so the eye finds it
 		// without reading every row.
 		if r.Running != "" || r.Building {
@@ -123,6 +128,9 @@ func drawGrid(s *term.Screen, m Model) int {
 		if r.SHA != "" {
 			fmt.Fprintf(&b, "  %s%s%s", term.Dim, r.SHA, term.Reset)
 		}
+		if i == sel {
+			b.WriteString(term.Reset)
+		}
 		s.Line(row, b.String())
 		row++
 	}
@@ -143,8 +151,21 @@ var tailCols = []struct {
 	{"rnd", 4, func(r Row, _ int) string { return "r" + fmt.Sprint(r.Round) }},
 	{"swept", 6, func(r Row, n int) string { return fmt.Sprintf("%d/%d", r.Swept, n) }},
 	{"repro", 6, func(r Row, _ int) string { return comma(r.Arts) }},
-	{"corpus", 8, func(r Row, _ int) string { return short(r.Corpus) }},
-	{"+new", 7, func(r Row, _ int) string { return "+" + short(r.CorpusNew) }},
+	// ZERO AND NOT-RECORDED ARE DIFFERENT STATES. A corpus of 0 means "no
+	// slice has reported one yet", not "the corpus is empty", and printing 0
+	// for both reads as a measured emptiness.
+	{"corpus", 8, func(r Row, _ int) string {
+		if r.Corpus == 0 {
+			return "-"
+		}
+		return short(r.Corpus)
+	}},
+	{"+new", 7, func(r Row, _ int) string {
+		if r.Swept == 0 {
+			return "-"
+		}
+		return "+" + short(r.CorpusNew)
+	}},
 	{"cov", 6, func(r Row, _ int) string {
 		if r.CovPct <= 0 {
 			return "-"

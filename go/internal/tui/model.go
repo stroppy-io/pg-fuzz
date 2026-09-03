@@ -75,9 +75,12 @@ type Row struct {
 
 // Model is everything the screen needs.
 type Model struct {
-	Slug      string
-	RunID     string
-	Started   time.Time
+	Slug    string
+	RunID   string
+	Started time.Time
+	// LastSlice is when the newest slice was recorded, which is where a dead
+	// campaign's clock stops.
+	LastSlice time.Time
 	Hours     float64
 	Live      bool
 	Round     int
@@ -222,6 +225,12 @@ func Load(campaignsRoot, slug string) Model {
 			byWS[r.Workspace] = w
 		}
 		c := w.Cells[r.Target]
+		// PER ROUND, not cumulative. A campaign runs nine or more rounds over
+		// the same targets, so a cumulative grid goes solid after round one
+		// and then shows nothing about what is happening now.
+		if r.Round > c.Round {
+			c = Cell{Round: r.Round, Corpus: c.Corpus}
+		}
 		c.Swept = true
 		c.Execs += r.Execs
 		c.NewUnits += r.NewUnits
@@ -236,11 +245,15 @@ func Load(campaignsRoot, slug string) Model {
 		}
 		w.Cells[r.Target] = c
 		w.Execs += r.Execs
-		w.New += r.NewUnits
 		w.Arts += r.Artifacts
+		// New units are THIS ROUND's, because the column is headed +new and a
+		// campaign total in a per-round column reads as growth exceeding the
+		// corpus it grew -- which it did: corpus 280.9k, +new 561.5k.
 		if r.Round > w.Round {
 			w.Round = r.Round
+			w.New = 0
 		}
+		w.New += r.NewUnits
 		seenTarget[r.Target] = true
 		if r.Round > m.Round {
 			m.Round = r.Round
@@ -248,10 +261,15 @@ func Load(campaignsRoot, slug string) Model {
 		m.TotalExec += r.Execs
 		m.TotalNew += r.NewUnits
 		m.TotalArts += r.Artifacts
+		if t, err := time.Parse(time.RFC3339, r.Started); err == nil && t.After(m.LastSlice) {
+			m.LastSlice = t
+		}
 	}
 	for _, w := range byWS {
 		for _, c := range w.Cells {
-			if c.Swept {
+			// Swept THIS round: the grid answers "how far has this round
+			// got", and after round one a cumulative count is always 23/23.
+			if c.Swept && c.Round == w.Round {
 				w.Swept++
 			}
 			w.Corpus += c.Corpus
@@ -333,6 +351,11 @@ func Load(campaignsRoot, slug string) Model {
 		}
 		sort.Strings(bits)
 		m.Activity = "fuzzing " + strings.Join(bits, "   ")
+	case DockerErr != "":
+		// Said, not inferred. "Nothing is running" and "I cannot see whether
+		// anything is running" are different statements, and only one of them
+		// should be believed.
+		m.Activity = "CANNOT SEE DOCKER -- " + DockerErr
 	default:
 		m.Activity = "idle -- no container running"
 	}
@@ -344,7 +367,15 @@ func Load(campaignsRoot, slug string) Model {
 }
 
 // Elapsed is how long the campaign has been going.
+// Elapsed stops when the campaign does.
+//
+// time.Since(Started) with no end climbs forever: a two-day-dead log once
+// reported 76 hours elapsed, in the same field a live campaign uses. A
+// campaign that is not running is measured to its last recorded slice.
 func (m Model) Elapsed() time.Duration {
+	if !m.Live && !m.LastSlice.IsZero() {
+		return m.LastSlice.Sub(m.Started)
+	}
 	if m.Started.IsZero() {
 		return 0
 	}
