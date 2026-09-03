@@ -71,6 +71,14 @@ type Slice struct {
 	// single total cannot answer that.
 	Corpus       int `json:"corpus"`
 	CorpusBefore int `json:"corpus_before"`
+
+	// DiskStop marks a slice the disk floor cut short.
+	//
+	// It has to be in the record. Such a slice produced fewer executions for
+	// a reason that has nothing to do with the target, and a ratchet
+	// comparing it against a full one would call that a regression -- the
+	// gate crying wolf about the filesystem.
+	DiskStop bool `json:"disk_stop,omitempty"`
 	// Artifacts is what THIS slice produced. The before/after pair is kept
 	// beside it so the total is still recoverable and the delta is never
 	// re-derived by subtracting two numbers a reader had to find.

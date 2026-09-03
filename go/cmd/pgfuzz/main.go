@@ -938,6 +938,8 @@ func requestFor(dir string, c workspace.Conf, r paths.Roots, target string, secs
 		Sanitizer: c.Sanitizer,
 		Lineage:   os.Getenv("PGFUZZ_LINEAGE_ON") != "0",
 		Stream:    os.Stderr,
+		// The running floor. A sweep writes corpus continuously too.
+		StopFreeGB: fuzz.DefaultStopFreeGB,
 	}
 }
 
@@ -987,6 +989,13 @@ func cmdSweep(argv []string) int {
 			fmt.Fprintf(os.Stderr, "stopped %d container(s) started by this run\n", n)
 		}
 	}()
+	// PREFLIGHT, the cheap tier: refuse to start below it rather than run into
+	// ENOSPC mid-corpus-write hours later. The floor that stops a RUNNING
+	// slice is armed separately, in the request.
+	if err := wslock.NeedDisk(dir, fuzz.DefaultPreflightGB, "a sweep"); err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 2
+	}
 	out := buildDir(dir, c, r)
 	targets, err := build.Targets(out)
 	targets = selectTargets(c, targets)

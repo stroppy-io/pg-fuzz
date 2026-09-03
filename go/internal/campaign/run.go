@@ -251,6 +251,7 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			// Omitting the field emitted a literal 0, which unmarshals to a
 			// NON-nil pointer and defeats that guard exactly.
 			CorpusBefore: r.CorpusFrom,
+			DiskStop:     r.DiskStop,
 			// The slice's OWN artifacts, not the directory's total. The
 			// total is weeks of accumulation and would read as this run's
 			// output on every dashboard that shows it.
@@ -277,6 +278,9 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			Workspace: e.Dir, Data: e.Data, Name: e.Name, OutDir: e.OutDir,
 			Seconds: c.PerTarget, Jobs: c.Jobs, MaxLen: e.MaxLen,
 			Sanitizer: e.San, Lineage: true,
+			// The floor, armed for every slice: a campaign grows corpora for
+			// hours and is exactly the thing that fills a disk.
+			StopFreeGB: fuzz.DefaultStopFreeGB,
 		},
 		Targets:  e.Targets,
 		Rotate:   round,

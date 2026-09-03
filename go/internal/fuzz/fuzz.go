@@ -34,10 +34,23 @@ import (
 	"pgfuzz/internal/logs"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 // Request is one fuzzing slice.
+// DefaultStopFreeGB is the floor the shell driver used: below this, a running
+// slice is stopped. Losing one target's round beats losing the filesystem.
+//
+// DefaultPreflightGB is the other tier: refuse to START below it. Deliberately
+// higher, because refusing costs nothing -- reclaim and retry -- while killing
+// a running slice costs its round.
+const (
+	DefaultStopFreeGB  = 8
+	DefaultPreflightGB = 15
+)
+
 type Request struct {
 	Workspace string // the workspace directory
 	// Data is where the corpus, artifacts, lineage and run scratch live.
@@ -45,17 +58,31 @@ type Request struct {
 	// A CAMPAIGN sets it to its own directory: the corpus that produced a
 	// campaign's coverage has to travel with the campaign, or the slug cannot
 	// be moved and re-measured, which is the whole point of the slug.
-	Data      string
-	Name      string // workspace name, for the container name
-	OutDir    string // the build, mounted read-only under the overlay
-	Target    string
-	Seconds   int
-	Jobs      int
-	MaxLen    int
-	Sanitizer string
-	Lineage   bool
-	Image     string
-	Stream    io.Writer
+	Data    string
+	Name    string // workspace name, for the container name
+	OutDir  string // the build, mounted read-only under the overlay
+	Target  string
+	Seconds int
+	Jobs    int
+	MaxLen  int
+
+	// StopFreeGB kills a RUNNING slice when free space falls through it.
+	//
+	// THE SECOND TIER. The shell driver had two deliberately different
+	// thresholds: a preflight that refuses to START (cheap to honour --
+	// reclaim and retry) and a floor that kills a slice already running,
+	// because losing one target's round beats losing the filesystem. The port
+	// carried the preflight into builds and the floor into coverage, and left
+	// the fuzz path with neither. A campaign is exactly what fills a disk: it
+	// grows corpora continuously for hours, and ENOSPC mid-write can truncate
+	// a corpus that took days to evolve.
+	//
+	// Zero disarms it.
+	StopFreeGB float64
+	Sanitizer  string
+	Lineage    bool
+	Image      string
+	Stream     io.Writer
 }
 
 // Result is what the slice produced.
@@ -72,6 +99,11 @@ type Result struct {
 	// correcting, arriving through the dashboard instead.
 	ArtifactsFrom int
 	ArtifactsTo   int
+	// DiskStop is whether the disk floor stopped this slice. It must reach
+	// the series: a slice cut short by the filesystem produced fewer
+	// executions for a reason that has nothing to do with the target, and a
+	// ratchet comparing it against a full slice would call that a regression.
+	DiskStop bool
 	// Harvested is how many reproducers this run moved out of the scratch
 	// overlay. Recorded separately from the artifacts delta so "found three"
 	// and "the directory happens to hold three more" stay distinguishable.
@@ -93,6 +125,15 @@ func (r Result) NewArtifacts() int {
 // internal/incontainer.
 
 // Run fuzzes one target for one slice.
+// freeGB is how much room is left where a path lives.
+func freeGB(path string) (float64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return float64(st.Bavail) * float64(st.Bsize) / (1 << 30), nil
+}
+
 func Run(ctx context.Context, r Request) (Result, error) {
 	if r.MaxLen == 0 {
 		r.MaxLen = 4096
@@ -194,16 +235,50 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		sink = io.MultiWriter(lf, r.Stream)
 	}
 
+	// THE DISK FLOOR, armed for as long as the slice runs.
+	//
+	// docker stop on THIS container by name, not a kill by ancestor image: a
+	// campaign runs several slices at once and the others have done nothing
+	// wrong. Stopping is enough -- libFuzzer's corpus is already on disk, and
+	// the harvest below still runs.
+	stopGuard := make(chan struct{})
+	var diskStopped atomic.Bool
+	if r.StopFreeGB > 0 {
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-stopGuard:
+					return
+				case <-t.C:
+					free, err := freeGB(data)
+					if err != nil || free >= r.StopFreeGB {
+						continue
+					}
+					diskStopped.Store(true)
+					fmt.Fprintf(os.Stderr,
+						"pgfuzz: only %.1f GB free where %s writes -- stopping %s\n",
+						free, data, name)
+					exec.Command("docker", "stop", "-t", "5", name).Run()
+					return
+				}
+			}
+		}()
+	}
+
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	start := time.Now()
 	runErr := cmd.Run()
+	close(stopGuard)
 
 	res := Result{
 		Elapsed:    time.Since(start),
 		LogPath:    logPath,
 		CorpusFrom: before,
 		CorpusTo:   countFiles(corpus),
+		DiskStop:   diskStopped.Load(),
 	}
 
 	// HARVEST THE REPRODUCERS BEFORE ANYTHING ELSE LOOKS AT THE COUNTS.
