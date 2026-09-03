@@ -51,6 +51,11 @@ func Scenario(argv []string) int {
 		Data: filepath.Join(work, "data"),
 		Sock: "/tmp",
 		Log:  filepath.Join(work, "server.log"),
+		// The recorded scenario's postmaster settings. Recorded and parsed
+		// since the port began, and applied by nothing -- so every replay ran
+		// on the engine's default buffers and anything that needed eviction
+		// pressure to happen quietly stopped reproducing.
+		Settings: scenario.PostmasterSettings(sc),
 	}
 	if sc.OrioleDB {
 		// OrioleDB is a table access method as well as an extension: without

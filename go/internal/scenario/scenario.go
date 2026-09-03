@@ -22,6 +22,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 )
 
 // Record is a findings .json: the scenario, plus what it did.
@@ -115,4 +117,42 @@ func KnownOp(op string) bool {
 		}
 	}
 	return false
+}
+
+// PostmasterSettings renders a recorded scenario's oriole_conf as GUCs.
+//
+// THESE CANNOT BE SET PER SESSION. Buffer sizes, the undo ring and the
+// bgwriter are postmaster-level, and they are the reason some findings
+// reproduce at all: a tiny main_buffers makes eviction happen at thousands of
+// rows instead of millions. A replay on the defaults is a different
+// experiment wearing the same seed number, and it comes back clean.
+//
+// Values are rendered rather than trusted verbatim because the artifact is
+// JSON: a number arrives as a float64 and "16" must not become "16.000000".
+func PostmasterSettings(sc Scenario) map[string]string {
+	if len(sc.OrioleConf) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(sc.OrioleConf))
+	for k, v := range sc.OrioleConf {
+		switch t := v.(type) {
+		case string:
+			out[k] = t
+		case bool:
+			if t {
+				out[k] = "on"
+			} else {
+				out[k] = "off"
+			}
+		case float64:
+			if t == math.Trunc(t) {
+				out[k] = strconv.FormatInt(int64(t), 10)
+			} else {
+				out[k] = strconv.FormatFloat(t, 'f', -1, 64)
+			}
+		default:
+			out[k] = fmt.Sprint(v)
+		}
+	}
+	return out
 }

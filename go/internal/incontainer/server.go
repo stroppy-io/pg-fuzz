@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -20,7 +21,10 @@ type Server struct {
 	Sock    string
 	Log     string
 	Preload string
-	cmd     *exec.Cmd
+	// Settings are postmaster-level GUCs applied on the command line, from a
+	// recorded scenario's oriole_conf. Nil for an ordinary server.
+	Settings map[string]string
+	cmd      *exec.Cmd
 
 	// The superuser to connect as, or "" for the OS user.
 	//
@@ -73,6 +77,9 @@ func (s *Server) Init(out string) error {
 	return nil
 }
 
+// Settings are postmaster-level GUCs applied at startup, from a recorded
+// scenario's oriole_conf. Empty for an ordinary server.
+
 // Start launches the postmaster.
 //
 // restart_after_crash=off is the setting the whole exercise depends on. With
@@ -82,6 +89,21 @@ func (s *Server) Init(out string) error {
 func (s *Server) Start(out string) error {
 	args := []string{"-D", s.Data, "-k", s.Sock, "-c", "listen_addresses=",
 		"-c", "restart_after_crash=off"}
+	// POSTMASTER-LEVEL SETTINGS FROM THE RECORDED SCENARIO.
+	//
+	// These are the ones that cannot be set per session -- buffer sizes, the
+	// undo ring, the bgwriter -- and they are the whole reason some findings
+	// reproduce at all: a tiny main_buffers makes eviction happen at thousands
+	// of rows instead of millions. A replay that runs on the engine's much
+	// larger defaults quietly stops reproducing anything that needed pressure,
+	// and comes back looking like a clean run.
+	//
+	// On the command line for the same reason as the preload above: the
+	// prepared data directory ships a postgresql.auto.conf, which PostgreSQL
+	// reads last.
+	for _, k := range sortedSettings(s.Settings) {
+		args = append(args, "-c", k+"="+s.Settings[k])
+	}
 	if s.Preload != "" {
 		// On the command line, not in postgresql.conf: the prepared data
 		// directory ships a postgresql.auto.conf, which PostgreSQL reads last
@@ -183,4 +205,15 @@ func (s *Server) Tail(n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// sortedSettings keeps the command line stable between runs, so two replays
+// of one scenario differ only where the scenario does.
+func sortedSettings(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
