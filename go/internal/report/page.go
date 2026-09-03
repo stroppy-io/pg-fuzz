@@ -164,10 +164,15 @@ core.</p></div>
 
 {{if .Findings}}
 <section>
-<h2>What it turned up</h2>
+<h2>Findings on record</h2>
 <div class="big">
   <div><div class="v">{{len .Findings}}</div><div class="k">distinct findings, triaged</div></div>
 </div>
+<div class="note"><p><strong>These are the project's standing findings, not
+this run's alone.</strong> A finding is a write-up a person made after triage,
+and write-ups are not stamped with the campaign that produced them — so they
+cannot be attributed to one run, and this page does not pretend otherwise. What
+<em>this</em> run produced is the artifact count above.</p></div>
 <div class="wrap">
 <table>
 <thead><tr><th>Area</th><th class="n">Findings</th></tr></thead>
