@@ -48,7 +48,21 @@ func TestRenderMatchesRecordedSQL(t *testing.T) {
 				skipped++
 				t.Skip("recorded sql is a session transcript, not a rendering")
 			}
-			want := body(string(sb))
+			// THE RECORDED DATABASE NAME IS NOT PART OF THE RENDERING.
+			//
+			// The Python generator connected to `postgres` and so rendered
+			// `ALTER DATABASE postgres`; the Go driver creates and connects to
+			// `dbfuzz`. Rendering `postgres` here would be fidelity to a
+			// transcript and a bug in the tool -- the statement succeeds and
+			// silently configures a database nothing then uses, which is how
+			// default_tablespace, the precondition behind the motivating
+			// finding, was recorded, rendered, executed, and not in effect.
+			//
+			// So the fixture's database name is normalised to the one the
+			// driver actually uses, and everything else still has to match
+			// byte for byte.
+			want := body(strings.ReplaceAll(string(sb),
+				"ALTER DATABASE postgres ", "ALTER DATABASE "+SetupDB+" "))
 			got := body(RenderSetup(rec.Scenario))
 			if len(want) == 0 {
 				t.Skip("recorded sql has no statements")

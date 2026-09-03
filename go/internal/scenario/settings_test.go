@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,30 @@ func TestPostmasterSettingsRenderJSONFaithfully(t *testing.T) {
 func TestNoOrioleConfMeansNoSettings(t *testing.T) {
 	if got := PostmasterSettings(Scenario{}); got != nil {
 		t.Errorf("an ordinary scenario produced settings: %v", got)
+	}
+}
+
+// The scenario runs in dbfuzz. The setup said ALTER DATABASE postgres, and
+// both statements SUCCEEDED -- configuring a database nothing then connected
+// to. default_tablespace is the precondition behind the motivating finding, so
+// it was recorded, rendered, executed, and not in effect.
+func TestSetupTargetsTheDatabaseTheScenarioUses(t *testing.T) {
+	ts := "ts_a"
+	sc := Scenario{
+		DefaultTablespace: &ts,
+		OrioleSettings:    map[string]any{"orioledb.serializable": "error"},
+		Tables:            []Table{{Name: "t", AM: "orioledb", Rows: 10}},
+	}
+	out := RenderSetup(sc)
+	if strings.Contains(out, "ALTER DATABASE postgres") {
+		t.Errorf("setup configures a database the scenario never uses:\n%s", out)
+	}
+	for _, want := range []string{
+		"ALTER DATABASE " + SetupDB + " SET default_tablespace = ts_a;",
+		"ALTER DATABASE " + SetupDB + " SET orioledb.serializable = error;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
 	}
 }

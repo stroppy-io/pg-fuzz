@@ -16,6 +16,17 @@ import (
 // container and no OrioleDB, and it fails loudly on the kind of small
 // divergence -- a missing TABLESPACE, a partition boundary off by one -- that
 // would otherwise turn into "the finding stopped reproducing" months later.
+// SetupDB is the database a rendered setup targets with its ALTER DATABASE
+// statements.
+//
+// It is a constant rather than a literal in three places because getting it
+// wrong is invisible: the scenario runs in dbfuzz, the statements said
+// `ALTER DATABASE postgres`, and both SUCCEEDED -- setting a default
+// tablespace and orioledb GUCs on a database nothing then connected to. The
+// tablespace one is the precondition behind the motivating finding, so the
+// scenario recorded it, rendered it, executed it, and ran without it.
+const SetupDB = "dbfuzz"
+
 func RenderSetup(s Scenario) string {
 	var b strings.Builder
 
@@ -34,10 +45,11 @@ func RenderSetup(s Scenario) string {
 		b.WriteString("CREATE TABLESPACE ts_b LOCATION '';\n")
 	}
 	if s.DefaultTablespace != nil && *s.DefaultTablespace != "" {
-		fmt.Fprintf(&b, "ALTER DATABASE postgres SET default_tablespace = %s;\n", *s.DefaultTablespace)
+		fmt.Fprintf(&b, "ALTER DATABASE %s SET default_tablespace = %s;\n",
+			SetupDB, *s.DefaultTablespace)
 	}
 	for _, k := range orderedKeys(s.OrioleSettings) {
-		fmt.Fprintf(&b, "ALTER DATABASE postgres SET %s = %v;\n", k, s.OrioleSettings[k])
+		fmt.Fprintf(&b, "ALTER DATABASE %s SET %s = %v;\n", SetupDB, k, s.OrioleSettings[k])
 	}
 
 	for _, t := range s.Tables {
