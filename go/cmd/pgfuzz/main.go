@@ -88,7 +88,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
                  with no arguments, lists every workspace
   pgfuzz index  [-slug NAME] [-o FILE]
   pgfuzz bundle -slug NAME [-cov <ws>] [-no-corpus] [-out DIR] [-force]
-  pgfuzz stop   [-w <ws>]
+  pgfuzz stop   [-w <ws>] [-slug NAME]
   pgfuzz watchdog [-grace S] [-interval S] [-n]
   pgfuzz plateau -w <ws> [-w <ws>...] [-window M] [-once]
   pgfuzz tidy   [-apply] [-min-mb N] [-docker]
@@ -789,6 +789,16 @@ func cmdBuild(argv []string) int {
 			fmt.Fprintf(os.Stderr, "pgfuzz: recording %s: %v\n", k, err)
 		}
 	}
+
+	// THE WORK LOG. Every build and run appending automatically is a stated
+	// rule of this project, and appendWorklog was called only by triage and
+	// log -- so the workspace's WORKLOG.md had a hole where every build was.
+	appendWorklog(dir, fmt.Sprintf("build %s", key), []string{
+		fmt.Sprintf("ref %s at %s", useRef, full),
+		fmt.Sprintf("sanitizer %s, engine %s", useSan, useEng),
+		fmt.Sprintf("%d targets in %s", len(res.Targets), dest),
+		fmt.Sprintf("took %s", res.Elapsed.Round(time.Second)),
+	})
 
 	fmt.Printf("\nbuilt  %s  %s  %s/%s  (%s)\n", conf.Name, key, useSan, useEng,
 		res.Elapsed.Round(time.Second))
@@ -2660,10 +2670,26 @@ func cmdBootstrap(argv []string) int {
 func cmdStop(argv []string) int {
 	fs := flag.NewFlagSet("stop", flag.ExitOnError)
 	ws := fs.String("w", "", "only this workspace's containers")
+	slug := fs.String("slug", "", "also stop this campaign's driver")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
 	}
+	// THE DRIVER FIRST, or stopping containers is pointless: a campaign that
+	// survives TERM immediately starts the next target's container, so the
+	// stop races the thing it is stopping. The old script said exactly this.
+	if *slug != "" {
+		r := paths.Resolve()
+		slugDir := filepath.Join(r.Campaigns(), *slug)
+		if pid := campaign.LiveDriver(slugDir); pid > 0 {
+			syscall.Kill(pid, syscall.SIGTERM)
+			fmt.Printf("asked campaign %s (pid %d) to stop\n", *slug, pid)
+			// A moment for it to put its own containers down; it reaps on
+			// exit now, so this usually leaves nothing below to do.
+			time.Sleep(2 * time.Second)
+		}
+	}
+
 	filter := "name=pgfuzz-run-"
 	if *ws != "" {
 		filter = "name=pgfuzz-run-" + *ws + "-"

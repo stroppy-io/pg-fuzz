@@ -75,6 +75,25 @@ func Starvation(s logs.Stats, floor int, acks map[string]string) Verdict {
 				fmt.Sprintf("%s: %d executions, floor %d", s.Target, s.Execs, floor))
 		}
 	}
+	// libFuzzer's own abort, which is NOT suppressible. A target that says it
+	// found a leak in its initial corpus, or no interesting inputs, did not
+	// fuzz -- whatever a floor or an acknowledgement says about it. The old
+	// gate made these unsuppressible on purpose and the port matched neither
+	// string.
+	if s.Aborted {
+		v.Failed = true
+		v.Detail = append(v.Detail,
+			s.Target+": libFuzzer aborted on the initial corpus -- it never fuzzed")
+	}
+	// Died before libFuzzer spoke at all: a different fault from a target that
+	// started and stalled, and conflating them has cost this project in both
+	// directions -- twelve builds failed in four minutes once, four dead
+	// targets survived a campaign the other time.
+	if s.Startup() == logs.Died {
+		v.Failed = true
+		v.Detail = append(v.Detail,
+			s.Target+": died before libFuzzer started -- check the harness initialiser")
+	}
 	if s.ReplayOnly() {
 		v.Failed = true
 		v.Detail = append(v.Detail, fmt.Sprintf(

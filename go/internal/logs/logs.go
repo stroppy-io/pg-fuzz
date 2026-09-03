@@ -48,6 +48,15 @@ type Stats struct {
 	UB          []UBSite
 	Crashes     []string
 
+	// Banner is whether libFuzzer announced itself at all. Without it,
+	// "died inside our own initialisation" and "ran and was killed before it
+	// printed" are the same observation.
+	Banner bool
+	// Aborted is libFuzzer's own words for a corpus it could not use. These
+	// are deliberately NOT suppressible: a target that aborted did not fuzz,
+	// whatever a floor or an acknowledgement says.
+	Aborted bool
+
 	// avgRate is libFuzzer's own average, the fallback for a run stopped by
 	// SIGTERM: it prints stats but no Done line, so without this the targets
 	// the watchdog has to stop are exactly the ones with no rate, and their
@@ -102,6 +111,17 @@ func Parse(r io.Reader) Stats {
 	for sc.Scan() {
 		line := strip(sc.Text())
 
+		if strings.Contains(line, "Running with entropic") ||
+			strings.Contains(line, "INFO: Seed:") ||
+			strings.Contains(line, "INFO: Loaded ") {
+			s.Banner = true
+		}
+		// libFuzzer's own words, matched exactly. A target that says either of
+		// these did not fuzz, and no floor or acknowledgement changes that.
+		if strings.Contains(line, "a leak has been found in the initial corpus") ||
+			strings.Contains(line, "no interesting inputs were found") {
+			s.Aborted = true
+		}
 		if m := reInited.FindStringSubmatch(line); m != nil && s.Inited == 0 {
 			s.Inited, _ = strconv.Atoi(m[1])
 		}
@@ -273,4 +293,51 @@ func classify(text string) string {
 		return "out-of-bounds"
 	}
 	return "other"
+}
+
+// Startup is what a log says about whether the target ever became a fuzzer.
+//
+// THREE STATES, NOT TWO, and conflating them has cost this project twice in
+// opposite directions: once failing all twelve builds of a campaign in four
+// minutes, once letting four dead targets survive a whole campaign.
+//
+//   - Died: libFuzzer never spoke. The target aborted inside its own
+//     initialisation, before the banner.
+//   - Inited: it started and replayed, but never entered the mutation loop.
+//   - Fuzzed: it executed.
+//
+// "No numbers" is NOT one of these: a log that could not be read says nothing
+// about the run, and treating silence as any of the three is the mistake.
+type Startup int
+
+const (
+	NoEvidence Startup = iota
+	Died
+	Inited
+	Fuzzed
+)
+
+func (s Startup) String() string {
+	switch s {
+	case Died:
+		return "died before libFuzzer started"
+	case Inited:
+		return "started but never fuzzed"
+	case Fuzzed:
+		return "fuzzed"
+	}
+	return "no evidence either way"
+}
+
+// Startup classifies a parsed log.
+func (s Stats) Startup() Startup {
+	switch {
+	case s.Execs > 0 || s.Done > 0:
+		return Fuzzed
+	case s.Inited > 0 || s.Banner:
+		return Inited
+	case s.Aborted:
+		return Died
+	}
+	return NoEvidence
 }
