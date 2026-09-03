@@ -29,6 +29,8 @@ import (
 	"pgfuzz/internal/breakdown"
 	"pgfuzz/internal/build"
 	"pgfuzz/internal/bundle"
+	findingsmeta "pgfuzz/internal/findings"
+
 	"pgfuzz/internal/campaign"
 	"pgfuzz/internal/census"
 	"pgfuzz/internal/corpus"
@@ -4461,6 +4463,21 @@ func cmdTriageReport(argv []string) int {
 		text = "> " + *note + "\n\n" + text
 	}
 
+	// ATTRIBUTION MUST STAY RECORDED. Every finding on disk carries a
+	// **Found by:** line; nothing stopped the next one being added without
+	// it, at which point every report here goes back to inferring the target
+	// from whichever fuzzer the prose happened to name.
+	//
+	// Reported always, and fatal under -check, because this document is the
+	// one that would silently degrade.
+	if missing := findingsmeta.MissingMeta(findingsRoot); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"pgfuzz: %d finding(s) have no **Found by:** line: %s\n",
+			len(missing), strings.Join(missing, " "))
+		if *check {
+			return 1
+		}
+	}
 	if *check {
 		// Stale is a FAILURE, not a warning. A triage document that has
 		// drifted from the record reads exactly like one that has not.
