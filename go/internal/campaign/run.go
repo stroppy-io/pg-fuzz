@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"pgfuzz/internal/fuzz"
@@ -36,6 +37,9 @@ type Config struct {
 	MaxOverrun time.Duration
 	Series     Series
 	Out        io.Writer
+
+	// Parallel is how many workspaces sweep at once. Zero means one.
+	Parallel int
 
 	// AfterSweep runs the gates after each workspace finishes a sweep, and it
 	// is a hook rather than a call because campaign must not import ratchet.
@@ -92,10 +96,17 @@ func Run(ctx context.Context, c Config) error {
 	start := time.Now()
 	deadline := start.Add(time.Duration(c.Hours * float64(time.Hour)))
 	hardStop := deadline.Add(c.MaxOverrun)
+	// Serialised, because workspaces now sweep concurrently and two goroutines
+	// writing a progress line at once produce one interleaved line -- which is
+	// worse than no line, since it looks like a corrupted target name.
+	var sayMu sync.Mutex
 	say := func(f string, a ...any) {
-		if c.Out != nil {
-			fmt.Fprintf(c.Out, f+"\n", a...)
+		if c.Out == nil {
+			return
 		}
+		sayMu.Lock()
+		defer sayMu.Unlock()
+		fmt.Fprintf(c.Out, f+"\n", a...)
 	}
 
 	for round := 1; ; round++ {
@@ -120,6 +131,21 @@ func Run(ctx context.Context, c Config) error {
 		// productivity are not alternatives: rotation is fairness ACROSS
 		// rounds, this is value WITHIN one that may not finish.
 
+		// WORKSPACES SWEEP CONCURRENTLY, up to Parallel at a time.
+		//
+		// The port made this a plain sequential loop and nothing recorded that
+		// as a decision. The cost is not subtle: five workspaces take five
+		// times the wall clock for the same hours budget, so the last arm of a
+		// comparison gets a fraction of the rounds the first one did -- on the
+		// campaign that exposed this, gt-pg19 got one round to gt-pg16's two
+		// and 15 of 23 targets never ran. The old matrix kept six in flight
+		// and noted that serial left the box "at 8 of 32 cores with 74.6%
+		// idle".
+		//
+		// One at a time remains available and is still the default for a
+		// single workspace, where concurrency buys nothing.
+		sem := make(chan struct{}, c.parallel())
+		var wg sync.WaitGroup
 		for _, e := range order {
 			if time.Now().After(hardStop) {
 				break
@@ -130,13 +156,25 @@ func Run(ctx context.Context, c Config) error {
 				}
 				say("past deadline, %s: %s", c.OnDeadline, e.Name)
 				if c.OnDeadline == FinishSweep {
-					// One more workspace, at full length, then stop.
+					// One more workspace, at full length, then stop. Waited
+					// for first: "one more" means one more, not one more
+					// alongside whatever is still going.
+					wg.Wait()
 					runOne(ctx, c, e, round, say, time.Time{})
 					return nil
 				}
 			}
-			runOne(ctx, c, e, round, say, deadline)
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(e Entry) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				runOne(ctx, c, e, round, say, deadline)
+			}(e)
 		}
+		// The round is not over until every workspace in it has finished, or
+		// the next round's rotation would overlap this one's slices.
+		wg.Wait()
 		if time.Now().After(deadline) {
 			break
 		}
@@ -270,4 +308,12 @@ func rotate(in []Entry, by int) []Entry {
 	out := make([]Entry, 0, n)
 	out = append(out, in[off:]...)
 	return append(out, in[:off]...)
+}
+
+// parallel is how many workspaces may sweep at once, never fewer than one.
+func (c Config) parallel() int {
+	if c.Parallel > 1 {
+		return c.Parallel
+	}
+	return 1
 }

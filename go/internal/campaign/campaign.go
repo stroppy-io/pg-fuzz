@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -151,7 +152,18 @@ type Series struct{ Path string }
 // One row per slice, flushed immediately. A buffered writer loses the tail
 // when the campaign is killed, and the tail is the part that says what was
 // happening when it died.
+// seriesMu serialises appends now that workspaces sweep concurrently.
+//
+// O_APPEND makes a single small write atomic on Linux, so rows would not
+// interleave -- but relying on that is relying on the row staying under a
+// pipe buffer forever, and a row grew every time a field was added to it.
+// The lock costs nothing at one write per slice.
+var seriesMu sync.Mutex
+
 func (s Series) Append(sl Slice) error {
+	seriesMu.Lock()
+	defer seriesMu.Unlock()
+
 	if err := os.MkdirAll(filepath.Dir(s.Path), 0o755); err != nil {
 		return err
 	}

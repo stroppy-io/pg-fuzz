@@ -66,6 +66,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz run   -w <workspace> -t <target> [-time S] [-jobs N]
   pgfuzz sweep -w <workspace> [-time S] [-jobs N] [-round N]
   pgfuzz campaign -slug NAME -hours H -w <ws> [-w <ws>...] [-on-deadline P]
+                  [-sealed] [-jobs N] [-parallel N] [-time S] [-rebuild]
   pgfuzz report   -slug NAME [-html FILE]
   pgfuzz report   -final [-prefix P] [-html FILE] [-data FILE]
   pgfuzz report   -exec  [-prefix P] [-html FILE]
@@ -1132,6 +1133,7 @@ func cmdCampaign(argv []string) int {
 	hours := fs.Float64("hours", 1, "how long to run")
 	per := fs.Int("time", 600, "seconds per target")
 	jobs := fs.Int("jobs", 1, "parallel jobs per target")
+	par := fs.Int("parallel", 1, "workspaces sweeping at once")
 	onDeadline := fs.String("on-deadline", "cut", "cut | finish-sweep | finish-round")
 	maxOverrun := fs.Duration("max-overrun", 0, "cap on overrun (default: one sweep)")
 	sealed := fs.Bool("sealed", false, "give the campaign its own corpus, so the slug can be reported and moved")
@@ -1330,6 +1332,7 @@ func cmdCampaign(argv []string) int {
 	err = campaign.Run(ctx, campaign.Config{
 		Slug: *slug, RunID: runID, Hours: *hours, PerTarget: *per, Jobs: *jobs,
 		Entries: entries, OnDeadline: campaign.OnDeadline(*onDeadline),
+		Parallel:   *par,
 		MaxOverrun: *maxOverrun,
 		Series:     campaign.Series{Path: filepath.Join(r.Campaigns(), *slug, "series.jsonl")},
 		Out:        os.Stderr,
