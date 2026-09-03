@@ -1,0 +1,104 @@
+/* pg-fuzz report design system -- THE TOKENS.
+ *
+ * Split out of base.css because the two pages did not in fact share it. The
+ * history index used base.css; the per-run report carried its own copy of the
+ * same palette under different names -- --accent for --copper, --rule for
+ * --hairline, --bad for --sev-confirmed (the identical hex, twice, in two
+ * files) -- and a different paper colour entirely. base.css opened by saying
+ * the sheet exists so "two pages that are meant to look like one product"
+ * cannot drift, while they were drifting.
+ *
+ * Only the tokens are shared. Each page keeps its own layout rules, because
+ * they lay out genuinely different things; what must not differ is the
+ * palette and the type, which is what makes two pages one product.
+ */
+  :root {
+    --paper:      #eceff3;
+    --surface:    #ffffff;
+    --surface-2:  #f4f6f9;
+    --ink:        #161b22;
+    --ink-2:      #39424f;
+    --slate:      #5f6a79;
+    --hairline:   #d3d9e1;
+    --hairline-2: #e3e7ed;
+    --copper:     #a85327;
+    --copper-dim: #c08055;
+
+    --sev-confirmed: #a3232f;
+    --sev-artifact:  #8a6410;
+    --sev-fixed:     #1d6a4c;
+    --sev-open:      #2c5b8a;
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+    --measure: 74ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #10141a;
+      --surface:    #171d25;
+      --surface-2:  #1d242e;
+      --ink:        #e4e8ee;
+      --ink-2:      #bcc5d1;
+      --slate:      #8b96a5;
+      --hairline:   #2c3540;
+      --hairline-2: #232b35;
+      --copper:     #d98a55;
+      --copper-dim: #a86b42;
+
+      --sev-confirmed: #e2707a;
+      --sev-artifact:  #d2a548;
+      --sev-fixed:     #5fb590;
+      --sev-open:      #7aa9d8;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #10141a;
+    --surface:    #171d25;
+    --surface-2:  #1d242e;
+    --ink:        #e4e8ee;
+    --ink-2:      #bcc5d1;
+    --slate:      #8b96a5;
+    --hairline:   #2c3540;
+    --hairline-2: #232b35;
+    --copper:     #d98a55;
+    --copper-dim: #a86b42;
+    --sev-confirmed: #e2707a;
+    --sev-artifact:  #d2a548;
+    --sev-fixed:     #5fb590;
+    --sev-open:      #7aa9d8;
+  }
+
+  :root[data-theme="light"] {
+    --paper:      #eceff3;
+    --surface:    #ffffff;
+    --surface-2:  #f4f6f9;
+    --ink:        #161b22;
+    --ink-2:      #39424f;
+    --slate:      #5f6a79;
+    --hairline:   #d3d9e1;
+    --hairline-2: #e3e7ed;
+    --copper:     #a85327;
+    --copper-dim: #c08055;
+    --sev-confirmed: #a3232f;
+    --sev-artifact:  #8a6410;
+    --sev-fixed:     #1d6a4c;
+    --sev-open:      #2c5b8a;
+  }
+
+  /* The names the per-run report uses for the same things. Aliases rather
+     than a rename so neither sheet's rules had to be rewritten, and so a
+     theme change flows through both sets at once. */
+  :root {
+    --rule:       var(--hairline);
+    --rule-2:     var(--hairline-2);
+    --accent:     var(--copper);
+    --accent-dim: var(--copper-dim);
+    --ok:         var(--sev-fixed);
+    --warn:       var(--sev-artifact);
+    --bad:        var(--sev-confirmed);
+  }

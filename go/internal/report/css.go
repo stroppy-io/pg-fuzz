@@ -18,7 +18,21 @@ import _ "embed"
 // tool IS; which plugins at which version is what it operates on.
 //
 //go:embed assets/base.css
-var baseCSS string
+var baseRules string
+
+// THE TOKENS, which are the part that must not differ.
+//
+// Split from the rules because the two pages did not actually share this
+// sheet: the history index used it, and the per-run report carried its own
+// copy of the same palette under different names. Each page keeps its own
+// layout rules -- they lay out different things -- but both resolve their
+// colours and type from here.
+//
+//go:embed assets/tokens.css
+var tokensCSS string
+
+// baseCSS is the index's full stylesheet: tokens then rules.
+var baseCSS = tokensCSS + baseRules
 
 // BaseCSS is the stylesheet, wrapped for inlining.
 func BaseCSS() string { return "<style>\n" + baseCSS + "\n</style>" }

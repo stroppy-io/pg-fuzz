@@ -11,36 +11,14 @@ package report
 //
 // body sets an explicit background from a token: the host paints its own
 // ground behind the page, so a transparent body silently borrows it.
-const page = `<!doctype html>
+var page = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Slug}} — fuzzing report</title>
 <style>
-:root {
-  --paper:#f2f1ee; --surface:#fbfaf8; --ink:#1b1a18; --ink-2:#4a4744;
-  --slate:#6d6963; --rule:#d9d5cf; --rule-2:#e8e5e0;
-  --accent:#9a4a1f; --accent-dim:#c07a4e;
-  --ok:#2f6d4f; --warn:#8a6410; --bad:#a3232f;
-  --serif:"Iowan Old Style",Palatino,"Book Antiqua",Georgia,serif;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper:#14140f; --surface:#1c1c17; --ink:#e8e5df; --ink-2:#c0bcb4;
-    --slate:#8d8880; --rule:#33322b; --rule-2:#26251f;
-    --accent:#d9884f; --accent-dim:#a86b42;
-    --ok:#63b58f; --warn:#d2a548; --bad:#e2707a;
-  }
-}
-:root[data-theme="dark"] {
-  --paper:#14140f; --surface:#1c1c17; --ink:#e8e5df; --ink-2:#c0bcb4;
-  --slate:#8d8880; --rule:#33322b; --rule-2:#26251f;
-  --accent:#d9884f; --accent-dim:#a86b42;
-  --ok:#63b58f; --warn:#d2a548; --bad:#e2707a;
-}
+` + tokensCSS + `
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);
   font-family:var(--sans);font-size:16px;line-height:1.6;
