@@ -797,6 +797,17 @@ func cmdRun(argv []string) int {
 		return 2
 	}
 	defer lk.Release()
+
+	// THE CONTAINERS GO WITH US. `docker run` is a client and the container is
+	// a child of dockerd, so an interrupt takes down the client and leaves the
+	// fuzzer running -- the stop command's own comment records "eighteen
+	// containers kept fuzzing". Scoped to this process's own containers by the
+	// pid in their name.
+	defer func() {
+		if n := fuzz.ReapOwn(); n > 0 {
+			fmt.Fprintf(os.Stderr, "stopped %d container(s) started by this run\n", n)
+		}
+	}()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -865,6 +876,17 @@ func cmdSweep(argv []string) int {
 		return 2
 	}
 	defer lk.Release()
+
+	// THE CONTAINERS GO WITH US. `docker run` is a client and the container is
+	// a child of dockerd, so an interrupt takes down the client and leaves the
+	// fuzzer running -- the stop command's own comment records "eighteen
+	// containers kept fuzzing". Scoped to this process's own containers by the
+	// pid in their name.
+	defer func() {
+		if n := fuzz.ReapOwn(); n > 0 {
+			fmt.Fprintf(os.Stderr, "stopped %d container(s) started by this run\n", n)
+		}
+	}()
 	out := buildDir(dir, c, r)
 	targets, err := build.Targets(out)
 	if err != nil || len(targets) == 0 {
@@ -1158,6 +1180,17 @@ func cmdCampaign(argv []string) int {
 			return 2
 		}
 		defer lk.Release()
+
+		// THE CONTAINERS GO WITH US. `docker run` is a client and the container is
+		// a child of dockerd, so an interrupt takes down the client and leaves the
+		// fuzzer running -- the stop command's own comment records "eighteen
+		// containers kept fuzzing". Scoped to this process's own containers by the
+		// pid in their name.
+		defer func() {
+			if n := fuzz.ReapOwn(); n > 0 {
+				fmt.Fprintf(os.Stderr, "stopped %d container(s) started by this run\n", n)
+			}
+		}()
 
 		if err := os.MkdirAll(campaign.WSDir(slugDir, c.Name), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
