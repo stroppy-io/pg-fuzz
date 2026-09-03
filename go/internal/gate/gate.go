@@ -55,8 +55,16 @@ func Starvation(s logs.Stats, floor int, acks map[string]string) Verdict {
 		// No numbers at all is not a pass. A log that could not be read says
 		// nothing about the run, and treating silence as health is how four
 		// dead targets survived a whole campaign.
+		// WHICH silence, because there are three and they send you to
+		// different places. Startup separates "died before libFuzzer started"
+		// (the harness initialiser) from "started but never fuzzed" (the
+		// corpus or the target) from "no evidence either way" (the log). All
+		// three failed here with one message that named none of them, so the
+		// classification existed and the person reading the failure still had
+		// to open the log to learn which it was.
 		v.Failed = true
-		v.Detail = append(v.Detail, s.Target+": no executed-unit count in the log")
+		v.Detail = append(v.Detail, fmt.Sprintf("%s: no executed-unit count in the log -- %s",
+			s.Target, s.Startup()))
 		return v
 	}
 	if s.Execs < floor {
