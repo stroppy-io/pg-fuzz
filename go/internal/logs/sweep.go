@@ -154,6 +154,13 @@ func ParseSweep(path string) (map[string]SweepStats, error) {
 type Regime struct {
 	Jobs int
 	Secs int // -max_total_time, recorded but not part of comparability
+	// Dict is whether libFuzzer was given a dictionary.
+	//
+	// From the invocation, which is the only place it is stated. The report
+	// carries a "Dictionaries: N/M" line whose field had no writer, so it read
+	// 0/M forever -- and a structured-format target without one saturates
+	// fast, which is a thing worth seeing rather than assuming.
+	Dict bool
 }
 
 var (
@@ -200,6 +207,7 @@ func ParseRegime(path string) (Regime, error) {
 		if m := reMaxTime.FindStringSubmatch(line); m != nil {
 			reg.Secs, _ = strconv.Atoi(m[1])
 		}
+		reg.Dict = strings.Contains(line, "-dict=")
 		return reg, nil
 	}
 	return reg, sc.Err()

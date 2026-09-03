@@ -135,10 +135,15 @@ func LoadWithPanels(campaignsRoot, slug, repo, wsRoot string) Model {
 		names = workspacesInSeries(
 			filepath.Join(repo, "scripts", "ratchet-series.jsonl"), slug)
 	}
+	covSeries := filepath.Join(repo, "scripts", "coverage-series.jsonl")
+	// The cov column, which had a renderer and no writer. Filled here rather
+	// than in Load because only this path knows where the coverage series is.
+	for i := range m.Rows {
+		m.Rows[i].CovPct = CoveragePct(covSeries, m.Rows[i].Name)
+	}
 	m.Growth = GrowthPanel(
 		filepath.Join(repo, "scripts", "ratchet-series.jsonl"),
-		filepath.Join(repo, "scripts", "coverage-series.jsonl"),
-		names, 24)
+		covSeries, names, 24)
 	m.System = ReadSystem(wsRoot)
 	m.Status = StatusLine(m.System)
 	return m

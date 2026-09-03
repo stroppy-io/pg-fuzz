@@ -169,3 +169,53 @@ func GrowthPanel(ratchetSeries, coverageSeries string, workspaces []string, widt
 	}
 	return out
 }
+
+// CoveragePct is the newest recorded line coverage for a workspace.
+//
+// FROM THE -cov WORKSPACE, because coverage is measured in its own
+// instrumented build: pg17-add's coverage lives under pg17-cov. The old
+// dashboard did this remap and the port dropped both it and the column's
+// only writer, so Row.CovPct was declared, read by the renderer, and assigned
+// by nobody -- the column read "-" forever.
+//
+// Zero means "not recorded", which the caller renders as "-" rather than as
+// a measured zero. Those are different states and the grid has to keep them
+// apart.
+func CoveragePct(seriesPath, ws string) float64 {
+	f, err := os.Open(seriesPath)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	want := CovWorkspace(ws)
+	var pct float64
+	dec := json.NewDecoder(f)
+	for {
+		var r struct {
+			WS    string `json:"ws"`
+			Lines struct {
+				Count, Covered int
+			} `json:"lines"`
+		}
+		if err := dec.Decode(&r); err != nil {
+			break
+		}
+		// Newest wins, and a row with no denominator is not a measurement.
+		if r.WS == want && r.Lines.Count > 0 {
+			pct = float64(r.Lines.Covered) * 100 / float64(r.Lines.Count)
+		}
+	}
+	return pct
+}
+
+// CovWorkspace maps a fuzzing workspace to the one its coverage is measured
+// in: pg17-add and pg17-und are both covered by pg17-cov.
+func CovWorkspace(ws string) string {
+	for _, suffix := range []string{"-add", "-und"} {
+		if strings.HasSuffix(ws, suffix) {
+			return strings.TrimSuffix(ws, suffix) + "-cov"
+		}
+	}
+	return ws
+}

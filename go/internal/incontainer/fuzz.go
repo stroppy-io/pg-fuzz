@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // Fuzz is the in-container half of a fuzzing slice.
@@ -42,6 +44,19 @@ func Fuzz(argv []string) int {
 	// later: fs.protected_hardlinks forbids linking to a file you do not own,
 	// so a sealed campaign could not hard-link its corpus and silently fell
 	// back to copying every input.
+	// PROCESSOR SECONDS, read from inside while the cgroup still exists.
+	//
+	// The containers are --rm, so the counter dies with them: the old sampler
+	// polled from the host mid-slice for exactly that reason. Reading it here,
+	// after run_fuzzer returns and before the container exits, gets the whole
+	// slice in one number and needs no sampler at all.
+	//
+	// This is not secs x jobs. That is what the slice was ALLOWED; the
+	// postmaster-backed targets spend most of a slice waiting rather than
+	// computing, so the two differ by more than an order of magnitude and only
+	// one of them is work done. The report quotes the wrong one without it.
+	writeCPUSeconds("/run-ovl/run.cpu")
+
 	handBack("/lineage", "/run-ovl", corpusMount(argv[0]))
 	_ = target
 	return code
@@ -78,3 +93,26 @@ func handBack(dirs ...string) {
 
 // corpusMount is where fuzz.Run bind-mounts this target's corpus.
 func corpusMount(target string) string { return "/tmp/" + target + "_corpus" }
+
+// writeCPUSeconds records this container's processor time.
+//
+// cgroup v2 first, then v1. A missing counter writes nothing rather than a
+// zero: the reader treats absence as "not measured" and zero as "measured no
+// work", and those must not be confused.
+func writeCPUSeconds(path string) {
+	if b, err := os.ReadFile("/sys/fs/cgroup/cpu.stat"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(line, "usage_usec "); ok {
+				if us, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					os.WriteFile(path, []byte(strconv.FormatFloat(us/1e6, 'f', 2, 64)), 0o644)
+					return
+				}
+			}
+		}
+	}
+	if b, err := os.ReadFile("/sys/fs/cgroup/cpuacct/cpuacct.usage"); err == nil {
+		if ns, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil {
+			os.WriteFile(path, []byte(strconv.FormatFloat(ns/1e9, 'f', 2, 64)), 0o644)
+		}
+	}
+}

@@ -203,7 +203,7 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			// The wall clock the slice TOOK, not the budget it was allowed.
 			// A slice killed at 8 minutes and one that ran its full 45
 			// seconds are different facts.
-			Seconds: int(r.Elapsed.Seconds()), Jobs: c.Jobs,
+			Seconds: int(r.Elapsed.Seconds()), Jobs: c.Jobs, Dict: r.Dict,
 			Execs: st.Execs, NewUnits: st.NewUnits,
 			Cov: st.Cov, Ft: st.Ft, Corpus: r.CorpusTo,
 			// BOTH ends, and this is not symmetry for its own sake. The

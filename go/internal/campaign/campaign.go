@@ -58,10 +58,13 @@ type Slice struct {
 	Started   string `json:"started"`
 	Seconds   int    `json:"secs"`
 	Jobs      int    `json:"jobs"`
-	Execs     int    `json:"execs"`
-	NewUnits  int    `json:"new_units"`
-	Cov       int    `json:"cov"`
-	Ft        int    `json:"ft"`
+	// Dict is whether this slice ran with a dictionary. Structured formats
+	// saturate fast without one, so its absence is a fact about the run.
+	Dict     bool `json:"dict"`
+	Execs    int  `json:"execs"`
+	NewUnits int  `json:"new_units"`
+	Cov      int  `json:"cov"`
+	Ft       int  `json:"ft"`
 	// Corpus after the slice, and before it. Both, for the same reason the
 	// artifacts carry both: the funnel asks what this slice ADDED, and a
 	// single total cannot answer that.

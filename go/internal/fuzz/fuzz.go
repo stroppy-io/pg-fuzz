@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"pgfuzz/internal/logs"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +75,9 @@ type Result struct {
 	// overlay. Recorded separately from the artifacts delta so "found three"
 	// and "the directory happens to hold three more" stay distinguishable.
 	Harvested int
-	ExitCode  int
+	// Dict is whether libFuzzer was given a dictionary for this slice.
+	Dict     bool
+	ExitCode int
 }
 
 // NewArtifacts is what THIS slice produced.
@@ -214,6 +217,17 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	// 103 slices.
 	//
 	// Moved, not copied, and before the counts are taken.
+	// The processor seconds the container measured of itself, placed beside
+	// the log so ratchet.CPUSecs finds it. It had a reader and no writer, so
+	// the report silently fell back to allocated core-time -- the number its
+	// own comment was written to stop being quoted.
+	if b, err := os.ReadFile(filepath.Join(rundir, "run.cpu")); err == nil {
+		os.WriteFile(strings.TrimSuffix(logPath, ".log")+".cpu", b, 0o644)
+	}
+
+	if reg, err := logs.ParseRegime(logPath); err == nil {
+		res.Dict = reg.Dict
+	}
 	res.Harvested = harvest(filepath.Join(rundir, "upper"), arts)
 	res.ArtifactsFrom = artsBefore
 	res.ArtifactsTo = countArtifacts(arts)
