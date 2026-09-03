@@ -68,7 +68,8 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz campaign -slug NAME -hours H -w <ws> [-w <ws>...] [-on-deadline P]
                   [-sealed] [-jobs N] [-parallel N] [-time S] [-rebuild]
   pgfuzz report   -slug NAME [-html FILE] [-md FILE]
-  pgfuzz report   -final [-prefix P] [-html FILE] [-data FILE]
+  pgfuzz report   -final [-prefix P] [-html FILE] [-md FILE] [-data FILE]
+                         [-from <archived data.json>]
   pgfuzz report   -exec  [-prefix P] [-html FILE]
   pgfuzz report   -funnel <campaign.jsonl> [-against <other.jsonl>]
   pgfuzz report   -record <campaign.jsonl> [-against <other.jsonl>]
@@ -1513,6 +1514,7 @@ func cmdReport(argv []string) int {
 	slug := fs.String("slug", "", "campaign name")
 	htmlOut := fs.String("html", "", "write a self-contained HTML report here")
 	mdOut := fs.String("md", "", "write the same report as Markdown here")
+	from := fs.String("from", "", "re-render an archived report's data.json instead of gathering")
 	covWS := fs.String("cov", "", "coverage workspace to include")
 	final := fs.Bool("final", false, "the campaign snapshot report")
 	execSum := fs.Bool("exec", false, "the one-page summary")
@@ -1536,7 +1538,7 @@ func cmdReport(argv []string) int {
 		return cmdExecReport(*prefix, *htmlOut)
 	}
 	if *final {
-		return cmdFinalReport(*prefix, *htmlOut, *dataOut)
+		return cmdFinalReport(*prefix, *htmlOut, *dataOut, *mdOut, *from)
 	}
 	if *slug == "" {
 		fs.Usage()
@@ -3994,7 +3996,7 @@ func cmdInventory(argv []string) int {
 // JSON the gather writes, so the data file is the contract between them -- and
 // it is shipped in the bundle, which means an archived report can be
 // re-rendered years later without the tree that produced it.
-func cmdFinalReport(prefix, htmlOut, dataOut string) int {
+func cmdFinalReport(prefix, htmlOut, dataOut, mdOut, from string) int {
 	r := paths.Resolve()
 	home, err := r.NeedHome()
 	if err != nil {
@@ -4030,13 +4032,33 @@ func cmdFinalReport(prefix, htmlOut, dataOut string) int {
 		return 2
 	}
 
-	d, err := finalreport.Gather(finalreport.Inputs{
-		Repo: home, WSRoot: r.WS, OSSFuzz: r.OSSFuzz(),
-		Prefix: prefix, Now: time.Now(),
-	}, invRaw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
-		return 2
+	// RE-RENDER AN ARCHIVED RUN, which is what the data file is a contract
+	// for. A past run's numbers must come from the data.json it shipped: the
+	// findings corpus keeps moving, so re-gathering would restate what that
+	// run found -- one archived on 2026-08-28 counted eight storage-engine
+	// findings where the same directory gives seven today.
+	var d finalreport.Data
+	if from != "" {
+		b, err := os.ReadFile(from)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		if err := json.Unmarshal(b, &d); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %s: %v\n", from, err)
+			return 2
+		}
+		fmt.Printf("  from  %s (archived %s)\n", from, dash(d.Generated))
+	} else {
+		var err error
+		d, err = finalreport.Gather(finalreport.Inputs{
+			Repo: home, WSRoot: r.WS, OSSFuzz: r.OSSFuzz(),
+			Prefix: prefix, Now: time.Now(),
+		}, invRaw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
 	}
 	raw, err := json.MarshalIndent(d, "", " ")
 	if err != nil {
@@ -4071,15 +4093,49 @@ func cmdFinalReport(prefix, htmlOut, dataOut string) int {
 		return 2
 	}
 	defer f.Close()
-	err = finalreport.Render(f, finalreport.RenderInputs{
+	// ONE INPUTS for however many documents are asked for, so the Markdown
+	// and the page cannot describe the run differently.
+	// AN ARCHIVED RENDER MUST NOT BORROW TODAY'S FACTS.
+	//
+	// The union and the stop marker are read from live host state. Rendering
+	// an archived run through them dated a run from August with the stop time
+	// of a campaign that finished this morning, and showed it either no
+	// coverage or somebody else's. Both come from the run's own directory
+	// instead -- an archive holds its own series/ beside the report/ it was
+	// rendered into -- and are simply absent when it does not have them,
+	// which is honest where a borrowed number is not.
+	unionPath := filepath.Join(home, "scripts", "coverage-union.jsonl")
+	stoppedAt := finalreport.ReadStoppedAt(finalreport.MarkerPath(r.WS))
+	if from != "" {
+		runDir := filepath.Dir(filepath.Dir(from))
+		unionPath = filepath.Join(runDir, "series", "coverage-union.jsonl")
+		stoppedAt = finalreport.ReadStoppedAt(
+			filepath.Join(runDir, "campaign-stopped.marker"))
+	}
+	ri := finalreport.RenderInputs{
 		Data:   d,
-		Union:  finalreport.ReadUnion(filepath.Join(home, "scripts", "coverage-union.jsonl")),
+		Union:  finalreport.ReadUnion(unionPath),
 		Floors: base.Floors, RateFloors: base.RateFloors, Tolerance: base.Tolerance,
-		StoppedAt: finalreport.ReadStoppedAt(finalreport.MarkerPath(r.WS)),
-	}, report.BaseCSS())
+		StoppedAt: stoppedAt,
+	}
+	err = finalreport.Render(f, ri, report.BaseCSS())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
+	}
+	if mdOut != "" {
+		mf, err := os.Create(mdOut)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		defer mf.Close()
+		if err := finalreport.RenderMarkdown(mf, ri); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		mst, _ := os.Stat(mdOut)
+		fmt.Printf("  wrote %s (%d bytes)\n", mdOut, mst.Size())
 	}
 	st, _ := os.Stat(htmlOut)
 	fmt.Printf("  wrote %s (%d bytes)\n", htmlOut, st.Size())
