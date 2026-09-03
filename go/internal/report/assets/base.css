@@ -489,6 +489,11 @@ table.cells tr:hover td, table.runs tr:hover td { background: var(--surface-2); 
 
 /* deltas, used by the HEAD index */
 .cfg    { font-size: .72rem; color: var(--slate); }
-.cfgchg { color: var(--sev-artifact); font-weight: 600; }
+/* .warn marks a cell the reader must not skim past: a config fingerprint that
+   MOVED, and a run's masked-target count. It was named .cfgchg here while both
+   templates asked for .warn, so neither cell was ever styled -- a changed
+   fingerprint, the signal that the experiment's own definition shifted
+   underneath a comparison, rendered identically to an unchanged one. */
+.warn   { color: var(--sev-artifact); font-weight: 600; }
 .delta-up { color: var(--sev-fixed); }
 .delta-dn { color: var(--sev-confirmed); }
