@@ -1344,8 +1344,9 @@ func cmdCampaign(argv []string) int {
 					Workspace: c.Name, Ref: c.Ref,
 					Sanitizer: c.Sanitizer, Engine: c.Get("engine"),
 					Plugins: b, PluginsFail: f, BuildOK: false,
-					Patches: campaignPatches(c),
-					Note:    "build failed; excluded from this campaign",
+					Patches:     campaignPatches(c),
+					OrioleDBSHA: workspaceOrioleSHA(r.WS, c.Name),
+					Note:        "build failed; excluded from this campaign",
 				}
 				bsha, bpins := campaignProvenance(slugDir, c.Name)
 				me.Provenance(bsha, c.Get("sha"), bpins)
@@ -1384,6 +1385,7 @@ func cmdCampaign(argv []string) int {
 			Sanitizer: c.Sanitizer, Engine: c.Get("engine"), Key: c.Get("key"),
 			Targets: ts, Plugins: built, PluginsFail: failed, BuildOK: true,
 			Patches: campaignPatches(c), SeededInputs: seeded,
+			OrioleDBSHA: workspaceOrioleSHA(r.WS, c.Name),
 		}
 		bsha, bpins := campaignProvenance(slugDir, c.Name)
 		me.Provenance(bsha, c.Get("sha"), bpins)

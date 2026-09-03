@@ -184,7 +184,12 @@ func Load(campaignsRoot, slug string) Model {
 	if man, err := campaign.ReadManifest(dir); err == nil {
 		m.Sealed = man.Sealed
 		for _, e := range man.Entries {
-			shas[e.Workspace] = short10(e.SHA)
+			// THE ORIOLEDB COMMIT WINS WHERE THERE IS ONE, as it did before:
+			// for an OrioleDB workspace the PostgreSQL sha says which base
+			// the engine was built against, not which engine, and the engine
+			// is what the run is testing. short10 rejects the placeholders,
+			// which is what stopped `(not built)` displacing a real commit.
+			shas[e.Workspace] = commitFor(e.SHA, e.OrioleDBSHA)
 			manTargets = append(manTargets, e.Targets...)
 			built[e.Workspace] = e.BuildOK
 			failed[e.Workspace] = !e.BuildOK
@@ -479,6 +484,23 @@ func workspacesInSeries(path, slug string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// commitFor is the commit the grid shows for a workspace.
+//
+// THE ORIOLEDB COMMIT WINS WHERE THERE IS ONE, as it did before the port: for
+// an OrioleDB workspace the PostgreSQL sha says which base the engine was
+// built against, not which engine, and the engine is what the run is testing.
+//
+// The placeholder guard runs BEFORE the preference, not after. An older driver
+// wrote `orioledb_sha=(not built)` into nine workspaces, and preferring the
+// field without checking it first is exactly how that string took the column
+// and rendered as "(not bui".
+func commitFor(pgSHA, orioleSHA string) string {
+	if odb := short10(orioleSHA); odb != "" {
+		return odb
+	}
+	return short10(pgSHA)
 }
 
 // short10 trims a commit to what the grid shows, and rejects placeholders.

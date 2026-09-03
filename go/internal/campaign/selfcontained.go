@@ -165,9 +165,13 @@ func copyFile(from, to string) error {
 // provenance. Plugins likewise carry the sha they were built from, which for a
 // local tree is local:<sha>[+dirty] rather than a bare "local".
 type ManifestEntry struct {
-	Workspace    string   `json:"workspace"`
-	Ref          string   `json:"ref"`
-	SHA          string   `json:"sha"`
+	Workspace string `json:"workspace"`
+	Ref       string `json:"ref"`
+	SHA       string `json:"sha"`
+	// OrioleDBSHA is the storage engine's commit, when there is one. For an
+	// OrioleDB workspace it is the commit that matters: the PostgreSQL sha
+	// says which base the engine was built against, not which engine.
+	OrioleDBSHA  string   `json:"orioledb_sha,omitempty"`
 	Sanitizer    string   `json:"sanitizer"`
 	Engine       string   `json:"engine"`
 	Key          string   `json:"key"`
