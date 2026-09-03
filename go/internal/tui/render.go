@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -218,12 +217,17 @@ func drawFooter(s *term.Screen, m Model, v View) {
 
 // Legend spells the two-letter codes out. They keep the grid narrow and are
 // meaningless on sight, and there is empty space below the grid.
+//
+// IN THE GRID'S OWN ORDER, which is the order it is given. The port sorted
+// these, and sorted them by the rendered string -- so by the two-letter CODE,
+// not by the target. A key whose rows run in a different order from the columns
+// it explains is read by scanning, which is the one thing a key exists to
+// avoid.
 func Legend(targets []string, width int) []string {
 	items := make([]string, 0, len(targets))
 	for _, t := range targets {
 		items = append(items, Code(t)+" "+strings.TrimSuffix(t, "_fuzzer"))
 	}
-	sort.Strings(items)
 	cw := 0
 	for _, i := range items {
 		if len(i)+2 > cw {
