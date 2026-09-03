@@ -687,11 +687,27 @@ func cmdBuild(argv []string) int {
 }
 
 // openWS resolves a workspace argument to its directory, config and build.
+// openWS resolves a workspace by name or path, and ALWAYS returns an absolute
+// directory.
+//
+// Absolute because the path becomes a docker bind mount. A relative one --
+// which is what `pgfuzz run -w gt-pg17` produces when run from inside
+// $PGFUZZ_WS, since the local directory matches first -- is rejected by docker
+// as a volume NAME:
+//
+//	create gt-pg17/corpus/simple_query_fuzzer: includes invalid characters
+//	for a local volume name ... If you intended to pass a host directory,
+//	use absolute path
+//
+// So the tool worked from one directory and not from the obvious one.
 func openWS(name string) (string, workspace.Conf, paths.Roots, error) {
 	r := paths.Resolve()
 	dir := name
 	if !filepath.IsAbs(dir) && !fileExists(filepath.Join(dir, "workspace.conf")) {
 		dir = r.Workspace(name)
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
 	}
 	c, err := workspace.Load(dir)
 	return dir, c, r, err
