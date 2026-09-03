@@ -34,7 +34,39 @@ const (
 // cells:  ·· not built   × build failed   (blank) idle   ◐ building
 //
 //	● fuzzing   · swept clean   N reproducers
-const cellW = 3 // content is cellW-1; each column is a leading space plus that
+const cellW = 3 // MINIMUM; CellWidth grows it to fill a wide window
+
+// CellWidth is the grid's cell width for a window of cols columns.
+//
+// FIXED AT THE MINIMUM FOR A NORMAL TERMINAL, wider when the window has room:
+// a fullscreened window should get a roomier grid, not the same small one in
+// the corner. Never narrower, so numbers never truncate.
+//
+// The port dropped this and used the minimum unconditionally, so the grid
+// stayed cramped at any window size. The Python computed it from the space
+// left after the row label and the tail columns, and so does this -- from the
+// widths this layout actually uses rather than the two numbers hard-coded
+// there, which described the old one.
+func CellWidth(cols, targets int) int {
+	if targets < 1 {
+		targets = 1
+	}
+	room := cols - gridLabelW - gridTailW
+	if room < 0 {
+		room = 0
+	}
+	w := room / targets
+	if w > 6 {
+		w = 6
+	}
+	if w < cellW {
+		w = cellW
+	}
+	return w
+}
+
+// gridLabelW is the "> " plus the workspace name column.
+const gridLabelW = 2 + 17
 
 // Draw renders one frame.
 func Draw(s *term.Screen, m Model, v View, sel int, rows, cols int) {
@@ -78,7 +110,7 @@ func drawGrid(s *term.Screen, m Model, sel int) int {
 		return 5
 	}
 	const nameW = 17
-	w := cellW - 1
+	w := CellWidth(s.Cols, len(m.Targets)) - 1
 
 	// Column headings line up with the cells: the row is "> " plus a
 	// 17-column name, and each cell is a leading space plus w.
@@ -142,6 +174,16 @@ func drawGrid(s *term.Screen, m Model, sel int) int {
 // the two were hand-spaced separately before and drifted apart -- which is the
 // whole of "the table looks off". A column cannot now be widened in one place
 // and not the other.
+// gridTailW is every column to the right of the grid: each tail column with
+// its leading space, plus the commit column the heading reserves.
+var gridTailW = func() int {
+	n := 2 + len("commit") + 4 // the commit column and its padding
+	for _, c := range tailCols {
+		n += 1 + c.w
+	}
+	return n
+}()
+
 var tailCols = []struct {
 	title string
 	w     int
