@@ -55,6 +55,17 @@ func Fuzz(argv []string) int {
 	// postmaster-backed targets spend most of a slice waiting rather than
 	// computing, so the two differ by more than an order of magnitude and only
 	// one of them is work done. The report quotes the wrong one without it.
+	// THE PER-WORKER LOGS, before the overlay is thrown away.
+	//
+	// Under -jobs>1 libFuzzer forks, and each worker writes fuzz-<i>.log in
+	// its working directory rather than onto stdout. The interesting lines --
+	// the execution counter, INITED, and the assertion text -- often exist
+	// ONLY there: 2,708 of 3,450 crashing runs in one campaign left an
+	// assertion with no assertion text, because the next run clobbered them.
+	// libFuzzer also deletes its own once it has printed them, so this is the
+	// only chance.
+	collectWorkerLogs("/run-ovl")
+
 	writeCPUSeconds("/run-ovl/run.cpu")
 
 	handBack("/lineage", "/run-ovl", corpusMount(argv[0]))
@@ -114,5 +125,25 @@ func writeCPUSeconds(path string) {
 		if ns, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64); err == nil {
 			os.WriteFile(path, []byte(strconv.FormatFloat(ns/1e9, 'f', 2, 64)), 0o644)
 		}
+	}
+}
+
+// collectWorkerLogs moves libFuzzer's per-worker logs somewhere durable.
+//
+// Kept as separate files rather than concatenated: the parent log repeats what
+// a worker printed, so merging them double-counts every execution total the
+// ratchet then reads.
+func collectWorkerLogs(dst string) {
+	m, _ := filepath.Glob("fuzz-*.log")
+	if len(m) == 0 {
+		// run_fuzzer works out of $OUT; look there too.
+		m, _ = filepath.Glob("/out/fuzz-*.log")
+	}
+	for _, p := range m {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		os.WriteFile(filepath.Join(dst, filepath.Base(p)), b, 0o644)
 	}
 }

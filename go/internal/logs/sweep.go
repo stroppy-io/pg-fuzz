@@ -26,7 +26,13 @@ type SweepStats struct {
 }
 
 var (
-	reFuzzing = regexp.MustCompile(`fuzzing ([a-z_]+) for`)
+	// BOTH BANNERS. The shell printed "fuzzing <target> for <n>s"; the Go
+	// sweep prints "---- <target> ---- (i/n)". ParseSweep matched only the
+	// first, so a Go sweep log redirected to sweep-roundN.log parsed to an
+	// EMPTY map -- and the ratchet, told to read a round log, reported
+	// "nothing was checked" and exited 2. It failed closed, which is the right
+	// direction, but the round was unjudgeable.
+	reFuzzing = regexp.MustCompile(`fuzzing ([a-z_]+) for|^\s*-{4} ([a-z_]+_fuzzer) -{4}`)
 	reExecs   = regexp.MustCompile(`stat::number_of_executed_units:\s*(\d+)`)
 	reNew     = regexp.MustCompile(`stat::new_units_added:\s*(\d+)`)
 	reAvg     = regexp.MustCompile(`stat::average_exec_per_sec: *(\d+)`)
@@ -74,14 +80,25 @@ func ParseSweep(path string) (map[string]SweepStats, error) {
 		// grep is fast because it rejects almost everything before it does any
 		// real work, and so must this.
 		raw := sc.Bytes()
+		// THE PREFILTER HAS TO KNOW EVERY BANNER. It exists because running
+		// six regexes over every line made a full-tree reseed take minutes
+		// where zgrep took seconds -- but a filter that rejects a delimiter
+		// makes the parser silently see no targets at all, which is how
+		// adding the Go banner to the regex changed nothing.
 		if !bytes.Contains(raw, []byte("stat::")) &&
 			!bytes.Contains(raw, []byte("fuzzing ")) &&
+			!bytes.Contains(raw, []byte("----")) &&
 			!bytes.Contains(raw, []byte("Done ")) {
 			continue
 		}
 		line := strip(sc.Text())
 		if m := reFuzzing.FindStringSubmatch(line); m != nil {
-			target = m[1]
+			// Whichever alternative matched carries the name.
+			if m[1] != "" {
+				target = m[1]
+			} else {
+				target = m[2]
+			}
 			continue
 		}
 		if target == "" {

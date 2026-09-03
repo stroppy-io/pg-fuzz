@@ -24,6 +24,7 @@
 package fuzz
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -221,6 +222,17 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	// the log so ratchet.CPUSecs finds it. It had a reader and no writer, so
 	// the report silently fell back to allocated core-time -- the number its
 	// own comment was written to stop being quoted.
+	// The per-worker logs, beside the slice's own. Named so the round they
+	// belong to is obvious and the next slice cannot clobber them.
+	if m, _ := filepath.Glob(filepath.Join(rundir, "fuzz-*.log")); len(m) > 0 {
+		for _, p := range m {
+			if b, err := os.ReadFile(p); err == nil {
+				os.WriteFile(filepath.Join(arts,
+					"run-"+stamp+"-"+filepath.Base(p)), b, 0o644)
+			}
+		}
+	}
+
 	if b, err := os.ReadFile(filepath.Join(rundir, "run.cpu")); err == nil {
 		os.WriteFile(strings.TrimSuffix(logPath, ".log")+".cpu", b, 0o644)
 	}
@@ -229,6 +241,14 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		res.Dict = reg.Dict
 	}
 	res.Harvested = harvest(filepath.Join(rundir, "upper"), arts)
+
+	// COMPRESSED, as the shell compressed it -- these run to gigabytes and
+	// gzip takes about fifty to one on them. Safe now that every reader
+	// handles both forms; before that it would have blinded the ratchet, the
+	// gate and the census at once.
+	if err := gzipInPlace(logPath); err == nil {
+		res.LogPath = logPath + ".gz"
+	}
 	res.ArtifactsFrom = artsBefore
 	res.ArtifactsTo = countArtifacts(arts)
 	if ee, ok := runErr.(*exec.ExitError); ok {
@@ -374,4 +394,42 @@ func harvest(upper, arts string) int {
 		moved++
 	}
 	return moved
+}
+
+// gzipInPlace compresses a finished log and removes the original.
+//
+// Only when it succeeds: a half-written .gz beside a deleted .log would lose
+// the slice's only durable record, which is the thing the log exists to be.
+func gzipInPlace(path string) error {
+	in, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp := path + ".gz.partial"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	zw := gzip.NewWriter(out)
+	if _, err := io.Copy(zw, in); err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path+".gz"); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Remove(path)
 }
