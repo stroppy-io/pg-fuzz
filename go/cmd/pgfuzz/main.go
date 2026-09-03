@@ -54,6 +54,7 @@ import (
 	"pgfuzz/internal/tui"
 	"pgfuzz/internal/watchdog"
 	"pgfuzz/internal/workspace"
+	"pgfuzz/internal/wslock"
 )
 
 const usage = `pgfuzz -- reproduce a recorded finding
@@ -483,6 +484,7 @@ func cmdBuild(argv []string) int {
 	plugins := fs.String("plugins", "", "plugins.tsv to use (default: the repo's)")
 	into := fs.String("into", "", "build into this directory instead of the workspace's builds/")
 	keepSrc := fs.Bool("keep-src", false, "keep the exported source tree")
+	noDisk := fs.Bool("no-disk-check", false, "build even with little free space")
 	noPin := fs.Bool("no-pin", false, "build against whatever substrate is present, ignoring the pin")
 	timeout := fs.Duration("timeout", 90*time.Minute, "give up after this long")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -535,6 +537,25 @@ func cmdBuild(argv []string) int {
 		fmt.Fprintf(os.Stderr, "==> refreshing %s\n", filepath.Base(repoDir))
 		if err := repo.Fetch(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "    %v\n", err)
+		}
+	}
+
+	// REFUSED, not queued. A build replaces the directory running fuzzers are
+	// executing out of, so starting one under a live sweep swaps binaries
+	// beneath a container that is mid-slice.
+	lk, err := wslock.Acquire(dir, "build")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 2
+	}
+	defer lk.Release()
+
+	// A build writes a PostgreSQL tree twice plus docker layers. Out of space
+	// part-way through surfaces as an unrelated write failing much later.
+	if !*noDisk {
+		if err := wslock.NeedDisk(dir, 15, "a build"); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
 		}
 	}
 
@@ -767,6 +788,15 @@ func cmdRun(argv []string) int {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
 	}
+
+	// A rebuild replaces the binaries this is about to execute, so hold the
+	// workspace for the duration rather than discover it mid-slice.
+	lk, lerr := wslock.Acquire(dir, "fuzzing")
+	if lerr != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", lerr)
+		return 2
+	}
+	defer lk.Release()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -826,6 +856,15 @@ func cmdSweep(argv []string) int {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
 	}
+
+	// A rebuild replaces the binaries this is about to execute, so hold the
+	// workspace for the duration rather than discover it mid-slice.
+	lk, lerr := wslock.Acquire(dir, "fuzzing")
+	if lerr != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", lerr)
+		return 2
+	}
+	defer lk.Release()
 	out := buildDir(dir, c, r)
 	targets, err := build.Targets(out)
 	if err != nil || len(targets) == 0 {
@@ -1109,6 +1148,17 @@ func cmdCampaign(argv []string) int {
 		// overwritten by the next build of that workspace, and after that the
 		// campaign's results describe binaries that no longer exist, so a
 		// coverage rerun measures something else under the campaign's name.
+		// Held for the whole campaign. Two campaigns sharing a workspace
+		// share its corpus and truncate each other's per-target logs, and
+		// neither says so -- the numbers keep arriving and belong to no
+		// single experiment.
+		lk, err := wslock.Acquire(dir, "campaign "+*slug)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %s: %v\n", c.Name, err)
+			return 2
+		}
+		defer lk.Release()
+
 		if err := os.MkdirAll(campaign.WSDir(slugDir, c.Name), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
