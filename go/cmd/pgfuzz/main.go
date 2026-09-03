@@ -99,6 +99,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
   pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D] [-min-stats P]
+  pgfuzz reverify [-findings DIR] [-only NAME] [-runs N]
   pgfuzz triage-sweep -w <ws> [-runs N]
   pgfuzz archive -slug NAME [-no-corpus] [-force]
   pgfuzz breakdown -w <ws> [-json]
@@ -240,6 +241,8 @@ func main() {
 		os.Exit(cmdCensus(os.Args[2:]))
 	case "gate":
 		os.Exit(cmdGate(os.Args[2:]))
+	case "reverify":
+		os.Exit(cmdReverify(os.Args[2:]))
 	case "triage-sweep":
 		os.Exit(cmdTriageSweep(os.Args[2:]))
 	case "archive":
