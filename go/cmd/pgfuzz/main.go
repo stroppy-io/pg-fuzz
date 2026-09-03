@@ -989,6 +989,7 @@ func cmdSweep(argv []string) int {
 	}()
 	out := buildDir(dir, c, r)
 	targets, err := build.Targets(out)
+	targets = selectTargets(c, targets)
 	if err != nil || len(targets) == 0 {
 		fmt.Fprintf(os.Stderr, "pgfuzz: nothing built in %s\n", out)
 		return 2
@@ -1356,6 +1357,7 @@ func cmdCampaign(argv []string) int {
 		}
 
 		ts, err := build.Targets(out)
+		ts = selectTargets(c, ts)
 		if err != nil || len(ts) == 0 {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %s: nothing built\n", name)
 			return 2
@@ -2604,11 +2606,20 @@ func cmdWS(argv []string) int {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
 		}
-		for k, v := range map[string]string{
-			"name": *newName, "project": "pgfuzz-" + *newName,
-			"flavor": *flavor, "ref": *ref, "sanitizer": *san,
-			"engine": "libfuzzer",
+		// A SLICE, not a map: map iteration is randomised, so the keys came
+		// out in a different order in every workspace created, and two confs
+		// that say the same thing did not diff as the same thing.
+		//
+		// targets= is written empty and MEANT: it is the key that says which
+		// targets to run when you ask for all, and empty means every built
+		// one. The shell driver wrote it into every workspace and never read
+		// it; this one reads it, so the workspaces it creates say it is there.
+		for _, kv := range []struct{ k, v string }{
+			{"name", *newName}, {"project", "pgfuzz-" + *newName},
+			{"flavor", *flavor}, {"ref", *ref}, {"sanitizer", *san},
+			{"engine", "libfuzzer"}, {"targets", ""},
 		} {
+			k, v := kv.k, kv.v
 			if err := workspace.Set(dir, k, v); err != nil {
 				fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 				return 2
@@ -4521,6 +4532,26 @@ func isHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// selectTargets applies a workspace's targets= key, and says what it dropped.
+//
+// The key has been written into every workspace.conf since the shell driver,
+// described there as "targets to run when you ask for all", and read by
+// nothing. All 59 on this host are empty, so it has never yet mattered -- and
+// the first person to fill one in would have been ignored without a word.
+//
+// LOUD when a name does not exist. A config asking for a target that was not
+// built is a mistake somebody wants to hear about, and the alternative is a
+// campaign quietly narrower than the one that was asked for.
+func selectTargets(c workspace.Conf, built []string) []string {
+	sel, missing := build.Selected(built, c.Get("targets"))
+	if len(missing) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"pgfuzz: %s: targets= names %d target(s) that were not built: %s\n",
+			c.Name, len(missing), strings.Join(missing, " "))
+	}
+	return sel
 }
 
 func workspacePatches(wsRoot, ws string) string {
