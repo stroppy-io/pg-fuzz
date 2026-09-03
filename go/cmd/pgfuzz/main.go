@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"pgfuzz/internal/archive"
+	"pgfuzz/internal/breakdown"
 	"pgfuzz/internal/build"
 	"pgfuzz/internal/bundle"
 	"pgfuzz/internal/campaign"
@@ -97,6 +98,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
   pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D] [-min-stats P]
+  pgfuzz breakdown -w <ws> [-json]
   pgfuzz clone <slug>|<path> <dest>
   pgfuzz reown [-w <ws>] [-all] [-n] [<path>...]
   pgfuzz repro -w <workspace> -t <target> <input>
@@ -235,6 +237,8 @@ func main() {
 		os.Exit(cmdCensus(os.Args[2:]))
 	case "gate":
 		os.Exit(cmdGate(os.Args[2:]))
+	case "breakdown":
+		os.Exit(cmdBreakdown(os.Args[2:]))
 	case "clone":
 		os.Exit(cmdClone(os.Args[2:]))
 	case "reown":
@@ -4713,4 +4717,111 @@ func closeAll(r io.Reader, f *os.File) {
 		c.Close()
 	}
 	f.Close()
+}
+
+// cmdBreakdown answers "which component produced these crashes".
+//
+// internal/breakdown was ported faithfully -- Classify, PatchedFiles, Scan,
+// ComponentsOf, the bld/ fix, the touch-every-component crediting -- and then
+// imported by nothing at all. The question the workspace exists to answer had
+// no way to be asked, and finalreport's component table rendered from whatever
+// the deleted Python had last appended.
+//
+// PER TARGET AND PER COMPONENT, because a single count per component cannot
+// say whether one target found everything. "A patched tree plus every plugin"
+// is not one thing.
+func cmdBreakdown(argv []string) int {
+	fs := flag.NewFlagSet("breakdown", flag.ExitOnError)
+	ws := fs.String("w", "", "workspace")
+	asJSON := fs.Bool("json", false, "emit the table as JSON")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(argv); err != nil || *ws == "" {
+		fs.Usage()
+		return 2
+	}
+	// A WORKSPACE OR A SEALED CAMPAIGN'S COPY OF ONE.
+	//
+	// Since a sealed campaign owns its artifacts, the directory holding them
+	// is campaigns/<slug>/ws/<name>/ and carries no workspace.conf. Refusing
+	// that would mean the breakdown could not be asked about exactly the runs
+	// worth asking about.
+	dir, c, _, err := openWS(*ws)
+	if err != nil {
+		if d, derr := filepath.Abs(*ws); derr == nil && fileExists(filepath.Join(d, "artifacts")) {
+			dir, c.Name = d, filepath.Base(d)
+		} else {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+	}
+
+	table := breakdown.Scan(dir, nil)
+	if len(table) == 0 {
+		// NOT a pass. A breakdown with nothing in it means no artifact carried
+		// an attributable frame, which is a different statement from "no
+		// component was involved" -- and the second is what an empty table
+		// looks like.
+		fmt.Fprintf(os.Stderr,
+			"pgfuzz: no attributable frames under %s/artifacts -- nothing to break down\n", dir)
+		return 2
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return jsonExit(enc.Encode(struct {
+			Workspace  string                    `json:"workspace"`
+			Components []string                  `json:"components"`
+			Table      map[string]map[string]int `json:"table"`
+		}{c.Name, breakdown.ComponentsOf(dir), table}))
+	}
+
+	// COMPONENT x TARGET, the orientation the old table had: the question is
+	// "which component did this target reach", and a single count per
+	// component cannot say whether one target found everything.
+	// Scan returns component -> target -> count.
+	comps := make([]string, 0, len(table))
+	targets := map[string]bool{}
+	for comp, per := range table {
+		comps = append(comps, comp)
+		for t := range per {
+			targets[t] = true
+		}
+	}
+	sort.Strings(comps)
+	cols := make([]string, 0, len(targets))
+	for t := range targets {
+		cols = append(cols, t)
+	}
+	sort.Strings(cols)
+
+	fmt.Printf("%-22s", "component")
+	for _, t := range cols {
+		fmt.Printf(" %10s", tui.Code(t))
+	}
+	fmt.Println("   total")
+	for _, comp := range comps {
+		fmt.Printf("%-22s", clip(comp, 22))
+		total := 0
+		for _, t := range cols {
+			n := table[comp][t]
+			total += n
+			if n > 0 {
+				fmt.Printf(" %10d", n)
+			} else {
+				fmt.Printf(" %10s", ".")
+			}
+		}
+		fmt.Printf(" %7d\n", total)
+	}
+
+	return 0
+}
+
+func jsonExit(err error) int {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 1
+	}
+	return 0
 }

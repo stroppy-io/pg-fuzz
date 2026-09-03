@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -205,7 +206,16 @@ func Scan(wsDir string, only map[string]bool) map[string]map[string]int {
 		if only != nil && !only[target] {
 			continue
 		}
-		logs, _ := filepath.Glob(filepath.Join(tdir, "run-*.log.gz"))
+		// BOTH FORMS. This globbed only .log.gz while the census globbed only
+		// .log -- the two halves of the port reading the same directory and
+		// disagreeing about which files exist in it. The runner writes .log
+		// and `pgfuzz tidy` turns it into .log.gz, so either is normal and a
+		// reader that sees one of them silently reports on half the evidence.
+		var logs []string
+		for _, pat := range []string{"run-*.log", "run-*.log.gz"} {
+			m, _ := filepath.Glob(filepath.Join(tdir, pat))
+			logs = append(logs, m...)
+		}
 		sort.Strings(logs)
 		for _, lg := range logs {
 			scanLog(lg, target, patched, out)
@@ -220,11 +230,15 @@ func scanLog(path, target string, patched map[string]bool, out map[string]map[st
 		return
 	}
 	defer f.Close()
-	zr, err := gzip.NewReader(f)
-	if err != nil {
-		return
+	var src io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		zr, err := gzip.NewReader(f)
+		if err != nil {
+			return
+		}
+		defer zr.Close()
+		src = zr
 	}
-	defer zr.Close()
 
 	credit := func(touched map[string]bool) {
 		for c := range touched {
@@ -237,7 +251,7 @@ func scanLog(path, target string, patched map[string]bool, out map[string]map[st
 
 	inReport := false
 	touched := map[string]bool{}
-	sc := bufio.NewScanner(zr)
+	sc := bufio.NewScanner(src)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
