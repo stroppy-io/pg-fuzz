@@ -1,0 +1,18 @@
+# The PostgreSQL commits this tree is pinned to.
+#
+# A workspace naming ref=origin/REL_17_STABLE builds whatever that branch is
+# TODAY. Correct for a HEAD run, wrong for a comparison: two campaigns a week
+# apart are not comparable, and a finding recorded against a branch NAME cannot
+# be reproduced later, because the name no longer means the same commit.
+#
+# A ref listed here is checked before every build of it. A ref that is NOT
+# listed still tracks its branch -- pinning is opt-in per ref, so a HEAD run
+# stays possible and stays honest about being one.
+#
+# Update with: pgfuzz pin -pg <ref> [-reason "..."]
+
+origin/REL_16_STABLE=a90cbbc86f996f1a20e83d47c4bc65bcb2baa0a0
+origin/REL_17_STABLE=4639b6cfe3f310b71e1e227dd2a915b053992c9b
+origin/REL_18_STABLE=d2943b94bcff19de5be3e84e2803a22010693f70
+origin/REL_19_STABLE=e65f21a274eb9de52b8286ff3b721259e6c37e82
+origin/master=0b776de09ed3e237181def135577321bdd31b548

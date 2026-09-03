@@ -1,0 +1,142 @@
+name: ci
+
+# WHAT THIS IS FOR.
+#
+# Every defect this repository's audit turned up shared one shape: correct,
+# tested code that nobody called. The unit tests were green throughout, because
+# they exercised libraries rather than the commands that use them. So CI runs
+# the tests AND checks the wiring: that the binary builds, that every command
+# in the usage text is reachable, and that no package is compiled into the
+# binary with no caller at all.
+#
+# It deliberately does NOT fuzz. A fuzzing run needs docker, a PostgreSQL
+# clone, and hours; a green CI here means "the tool is sound", not "the fuzzer
+# found nothing".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: go/go.sum
+
+      # No third-party dependencies, deliberately: a binary handed to a vendor
+      # so they can confirm a defect must not need a module proxy to build.
+      # If go.mod ever grows a require block, this fails and says so.
+      - name: no third-party dependencies
+        working-directory: go
+        run: |
+          if grep -qE '^\s*require' go.mod; then
+            echo "go.mod has grown a dependency; this binary is meant to build with none" >&2
+            grep -nE '^\s*require' -A5 go.mod >&2
+            exit 1
+          fi
+
+      - name: build
+        working-directory: go
+        run: go build ./...
+
+      - name: vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: gofmt
+        working-directory: go
+        run: |
+          out=$(gofmt -l ./cmd ./internal)
+          if [ -n "$out" ]; then
+            echo "not gofmt'd:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+
+      - name: test
+        working-directory: go
+        run: go test ./...
+
+      # The campaign appends the series from several goroutines now, and the
+      # progress writer is shared. Neither would fail loudly if it raced.
+      - name: test -race
+        working-directory: go
+        run: go test -race ./internal/campaign/ ./internal/fuzz/
+
+  wiring:
+    # THE CHECK THAT WOULD HAVE CAUGHT THE AUDIT'S FINDINGS.
+    #
+    # A package that compiles and is imported by nothing is the exact shape of
+    # every gap: build.ApplyPatches, internal/breakdown, the archive writer,
+    # ratchet's acknowledgement list. Green unit tests said nothing about any
+    # of them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: go/go.sum
+
+      - name: every internal package has a caller
+        working-directory: go
+        run: |
+          fail=0
+          for d in internal/*/; do
+            pkg="pgfuzz/${d%/}"
+            # assets is embedded rather than called; term is a leaf used by tui.
+            case "$pkg" in *assets) continue ;; esac
+            if ! grep -rq "\"$pkg\"" --include='*.go' cmd internal; then
+              echo "no caller for $pkg" >&2
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: every documented command is reachable
+        working-directory: go
+        run: |
+          go build -o /tmp/pgfuzz ./cmd/pgfuzz
+          # Names in the usage block, first word of each "  pgfuzz <cmd>" line.
+          cmds=$(/tmp/pgfuzz 2>&1 | sed -n 's/^  pgfuzz \([a-z-]*\).*/\1/p' | sort -u)
+          test -n "$cmds" || { echo "no commands found in the usage text" >&2; exit 1; }
+          fail=0
+          for c in $cmds; do
+            if ! grep -q "case \"$c\":" cmd/pgfuzz/main.go; then
+              echo "usage documents '$c' but nothing dispatches it" >&2
+              fail=1
+            fi
+          done
+          exit $fail
+
+  harness:
+    # The harnesses are C compiled inside OSS-Fuzz's image, which CI does not
+    # have. A syntax check still catches the class of mistake that survives
+    # review -- and it is cheap.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: harness sources parse
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq clang >/dev/null
+          fail=0
+          for f in project/fuzzer/*.c; do
+            clang -fsyntax-only -I project/fuzzer "$f" 2>/tmp/err || {
+              # Missing PostgreSQL headers are expected here; anything else is
+              # a real parse error and must fail.
+              if grep -qvE "file not found|no such file" /tmp/err; then
+                echo "== $f"; cat /tmp/err; fail=1
+              fi
+            }
+          done
+          exit $fail

@@ -80,7 +80,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
                   [-reseed <target> -reason "..." [-since ISO]]
                   [-profile NAME]   an isolated baseline, series and history
   pgfuzz bootstrap [-cache DIR]
-  pgfuzz pin    [-check] [-update -reason "..."]
+  pgfuzz pin    [-check] [-update -reason "..."] [-pg <ref> [-reason "..."]]
   pgfuzz corpus -w <ws> [-repair] [-seed-from <ws>] [-minimize [-cap N]]
                         [-autocap [-apply] [-tune-budget]]
                         [-seed-from-source <pg-src> [-extra-globs G]]
@@ -610,6 +610,19 @@ func cmdBuild(argv []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
+	}
+
+	// THE POSTGRESQL PIN, checked the same way the substrate pin is. A pinned
+	// ref that has moved means this build is not the experiment the pin
+	// describes -- and unlike the substrate, the drift is invisible: the
+	// branch name still resolves, just to something else.
+	if !*noPin {
+		if pins, err := archive.ReadPGPin(r.Home); err == nil {
+			if bad := pins.Check(repo.Dir, useRef, full); bad != "" {
+				fmt.Fprintf(os.Stderr, "pgfuzz: %s\n", bad)
+				return 2
+			}
+		}
 	}
 
 	// REFUSED BEFORE THE CONTAINER STARTS, and only for ASan. A tree without
@@ -4329,6 +4342,7 @@ func cmdPin(argv []string) int {
 	check := fs.Bool("check", false, "exit 1 if the substrate does not match")
 	update := fs.Bool("update", false, "move the pin to what this machine has")
 	reason := fs.String("reason", "", "why the pin is moving; required by -update")
+	pgRef := fs.String("pg", "", "also pin this PostgreSQL ref at its current commit")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
@@ -4338,6 +4352,37 @@ func cmdPin(argv []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
+	}
+
+	// PINNING A POSTGRESQL REF, which is opt-in per ref. A ref that is not
+	// listed still tracks its branch, so a HEAD run stays possible and stays
+	// honest about being one.
+	if *pgRef != "" {
+		pins, err := archive.ReadPGPin(home)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		pgRepo := filepath.Join(r.Cache, "postgres")
+		sha, err := archive.ResolvePG(pgRepo, *pgRef)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		if was, ok := pins[*pgRef]; ok && was != sha && *reason == "" {
+			fmt.Fprintf(os.Stderr,
+				"pgfuzz: %s is already pinned to %s; moving it needs -reason,\n"+
+					"  because every fingerprint after the move differs from every one before\n",
+				*pgRef, was[:12])
+			return 2
+		}
+		pins[*pgRef] = sha
+		if err := pins.Write(home); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		fmt.Printf("pinned %s at %s\n", *pgRef, sha)
+		return 0
 	}
 
 	if *update {
