@@ -53,6 +53,14 @@ type Row struct {
 	VanillaWS  []string `json:"vanilla_ws"`
 	InOrioleDB bool     `json:"in_orioledb_code"`
 	Sources    []string `json:"sources"`
+
+	// How the signature's workspaces split by sanitizer. The summary table
+	// has always shown these two columns and computed them on the way past;
+	// the JSON did not carry them, so every consumer had to reimplement the
+	// classification -- and any that did it from the workspace NAME got the
+	// same wrong answer described on Annotate.
+	ASan  int `json:"asan_ws"`
+	UBSan int `json:"ubsan_ws"`
 }
 
 var (
@@ -281,11 +289,17 @@ func (b *Builder) Rows() []Row {
 }
 
 // Write emits census/signatures.json under dir.
-func (b *Builder) Write(dir string) error {
+// Write records the census. known maps a workspace to its recorded sanitizer,
+// so the JSON carries the same split the summary table shows; pass nil and the
+// classification falls back to the name suffix, which is right for about half
+// the workspaces on this host.
+func (b *Builder) Write(dir string, known map[string]string) error {
 	if err := os.MkdirAll(filepath.Join(dir, "census"), 0o755); err != nil {
 		return err
 	}
-	raw, err := json.MarshalIndent(b.Rows(), "", " ")
+	rows := b.Rows()
+	Annotate(rows, known)
+	raw, err := json.MarshalIndent(rows, "", " ")
 	if err != nil {
 		return err
 	}

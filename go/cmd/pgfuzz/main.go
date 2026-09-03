@@ -2302,11 +2302,22 @@ func cmdCensus(argv []string) int {
 		fmt.Fprintln(os.Stderr, "pgfuzz: no logs matched")
 		return 2
 	}
-	if err := b.Write(*out); err != nil {
+	// THE SANITIZER COMES FROM THE CONFIG. Deriving it from the workspace
+	// name answers "other" for every workspace that does not use the -add /
+	// -und suffix, which is half of them here and all of the ones any recent
+	// campaign made.
+	known := map[string]string{}
+	for _, ws := range wss {
+		if _, c, _, err := openWS(ws); err == nil {
+			known[ws] = c.Sanitizer
+		}
+	}
+	if err := b.Write(*out, known); err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
 	}
 	rows := b.Rows()
+	census.Annotate(rows, known)
 	var orioleOnly, inOriole int
 	for _, row := range rows {
 		if row.OrioleOnly {
@@ -3200,14 +3211,18 @@ func cmdBundle(argv []string) int {
 	}
 	if b := census.New(); true {
 		var logs int
+		known := map[string]string{}
 		if entries, err := os.ReadFile(filepath.Join(campDir, "live", "entries")); err == nil {
 			for _, ws := range strings.Fields(string(entries)) {
 				logs += addWorkspaceLogs(b, r, ws)
+				if _, c, _, err := openWS(ws); err == nil {
+					known[ws] = c.Sanitizer
+				}
 			}
 		}
 		if logs == 0 {
 			m.Add("census", false, "no logs to scan")
-		} else if err := b.Write(stage); err != nil {
+		} else if err := b.Write(stage, known); err != nil {
 			m.Add("census", false, err.Error())
 		} else {
 			m.Add("census", true, fmt.Sprintf("%d signatures from %d logs", len(b.Rows()), logs))

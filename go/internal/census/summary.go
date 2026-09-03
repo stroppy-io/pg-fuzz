@@ -48,8 +48,27 @@ type Build struct {
 	Patches                   string
 }
 
-// Sanitizer names the build a workspace is, from its suffix.
-func Sanitizer(ws string) string {
+// Sanitizer names the build a workspace is.
+//
+// FROM THE CONFIG WHERE THERE IS ONE. The suffix convention (-add, -und) is
+// followed by half the workspaces on this host and by none of the ones any
+// recent campaign created: 34 of 67 match it, while all 67 record sanitizer=
+// in workspace.conf. Reading the name therefore answered "other" for every
+// gt-* workspace that had in fact been built with AddressSanitizer, and the
+// summary's asan and ubsan columns undercounted by half.
+//
+// known maps a workspace to its recorded sanitizer ("address", "undefined",
+// "coverage"). The suffix remains the fallback for a workspace whose config
+// cannot be read, which is the only case it was ever right about.
+func Sanitizer(ws string, known map[string]string) string {
+	switch known[ws] {
+	case "address":
+		return "asan"
+	case "undefined":
+		return "ubsan"
+	case "coverage":
+		return "coverage"
+	}
 	switch {
 	case strings.HasSuffix(ws, "-add"):
 		return "asan"
@@ -57,6 +76,22 @@ func Sanitizer(ws string) string {
 		return "ubsan"
 	}
 	return "other"
+}
+
+// Annotate fills each row's sanitizer split, so the JSON carries what the
+// summary table shows instead of leaving every consumer to recompute it.
+func Annotate(rows []Row, known map[string]string) {
+	for i := range rows {
+		rows[i].ASan, rows[i].UBSan = 0, 0
+		for _, w := range rows[i].Workspaces {
+			switch Sanitizer(w, known) {
+			case "asan":
+				rows[i].ASan++
+			case "ubsan":
+				rows[i].UBSan++
+			}
+		}
+	}
 }
 
 // WriteSummary renders the consolidation document.
@@ -139,15 +174,9 @@ func WriteSummary(out io.Writer, in SummaryInput) {
 	a("| hits | ws | asan | ubsan | families | targets | signature |")
 	a("|---:|---:|---:|---:|---|---|---|")
 	for _, r := range in.Rows {
-		asan, ubsan := 0, 0
-		for _, w := range r.Workspaces {
-			switch Sanitizer(w) {
-			case "asan":
-				asan++
-			case "ubsan":
-				ubsan++
-			}
-		}
+		// Filled by Annotate, which the caller runs before writing either
+		// document, so the table and the JSON cannot disagree.
+		asan, ubsan := r.ASan, r.UBSan
 		var short []string
 		for _, t := range r.Targets {
 			short = append(short, strings.TrimSuffix(t, "_fuzzer"))
