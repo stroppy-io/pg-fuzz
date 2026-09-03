@@ -4366,6 +4366,9 @@ func cmdTriageReport(argv []string) int {
 	family := fs.String("family", "pg17", "version family to lift for")
 	note := fs.String("note", "", "provenance line above the document; use when writing\n"+
 		"    	into an archive whose other contents are older than this run")
+	var wsPat wsList
+	fs.Var(&wsPat, "ws", "only findings naming a workspace matching this glob\n"+
+		"    	(repeatable, e.g. -ws 'pg17-10-ext-*')")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
@@ -4383,7 +4386,21 @@ func cmdTriageReport(argv []string) int {
 	baseline := filepath.Join(home, "scripts", "ubsan-baseline.tsv")
 
 	var findings []triage.Finding
+	scoped := map[string][]string{}
+	var dropped int
 	for _, n := range triage.FindingDirs(findingsRoot) {
+		// SCOPE BY WORKSPACE, when asked. Every report over this directory
+		// prints all of it under whatever heading it was given, so a campaign
+		// that built no storage engine still listed eight storage-engine
+		// findings from other campaigns entirely.
+		if len(wsPat) > 0 {
+			hit, ok := triage.InScope(triage.ReadWriteup(findingsRoot, n, true), wsPat)
+			if !ok {
+				dropped++
+				continue
+			}
+			scoped[n] = hit
+		}
 		findings = append(findings, triage.ParseFinding(findingsRoot, n))
 	}
 	triage.Sort(findings)
@@ -4391,6 +4408,30 @@ func cmdTriageReport(argv []string) int {
 	text := triage.Render(findings,
 		triage.LiftCandidates(findingsRoot, r.Campaigns(), baseline, *family),
 		triage.Censuses(findingsRoot, r.Campaigns()), accFiles, accRows)
+	if len(wsPat) > 0 {
+		// SAID AT THE TOP, because the number in this document is the thing
+		// people quote. A scoped triage is a different claim from the whole
+		// corpus, and attribution here is by MENTION -- no write-up field
+		// records the campaign that produced it -- so the document has to
+		// carry both facts rather than look like a filtered record.
+		var b strings.Builder
+		fmt.Fprintf(&b, "> **Scoped to %s.** %d of %d write-ups name a matching\n",
+			strings.Join(wsPat, ", "), len(findings), len(findings)+dropped)
+		b.WriteString("> workspace; the rest belong to other campaigns and are not listed.\n>\n")
+		b.WriteString("> Attribution is by workspace names mentioned in the prose. No field in a\n")
+		b.WriteString("> write-up records which campaign produced it, so this is inference, not\n")
+		b.WriteString("> provenance: a finding whose author did not name a workspace cannot be\n")
+		b.WriteString("> placed and is absent here.\n>\n")
+		names := make([]string, 0, len(scoped))
+		for n := range scoped {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Fprintf(&b, "> - `%s` — %s\n", n, strings.Join(scoped[n], ", "))
+		}
+		text = b.String() + "\n" + text
+	}
 	if *note != "" {
 		text = "> " + *note + "\n\n" + text
 	}
