@@ -976,6 +976,35 @@ func cmdGate(argv []string) int {
 	for t := range swept {
 		sweptList = append(sweptList, t)
 	}
+	// WHAT THIS ROUND SAW, so absence can be judged over a series rather than
+	// a single round -- and so the accept-list can shrink. A gate whose list
+	// only ever grows becomes the table nobody reads.
+	var seenUB []string
+	for _, st := range round {
+		for _, u := range st.UB {
+			if u.Function != "" {
+				seenUB = append(seenUB, u.Function)
+			}
+		}
+	}
+	if home, err := r.NeedHome(); err == nil {
+		series := filepath.Join(home, "scripts", "ubsan-series.jsonl")
+		var accTokens []string
+		for _, a := range accepted {
+			if gate.InScope(a, c.Name) {
+				accTokens = append(accTokens, a.Function)
+			}
+		}
+		if v := gate.UBSanWithdrawals(series, c.Name, accTokens, seenUB); len(v.Detail) > 0 {
+			fmt.Println(v)
+		}
+		if err := gate.RecordUBSanRound(series, gate.UBSanRound{
+			WS: c.Name, Log: "gate", Sites: seenUB,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: recording the ubsan round: %v\n", err)
+		}
+	}
+
 	// The round as a whole: whether its numbers can be believed at all.
 	// Starvation judges one target against a floor; this asks how many slices
 	// reported anything, because a floor cannot be verified against a slice
