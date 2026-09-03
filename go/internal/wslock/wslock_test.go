@@ -69,3 +69,42 @@ func TestLocksArePerWorkspace(t *testing.T) {
 	}
 	lb.Release()
 }
+
+// A campaign holds the workspace lock for the whole run and then spawns
+// `pgfuzz build` as a subprocess. That child asked for the same lock and was
+// refused, so a campaign could never build a workspace it had locked and
+// reported "no workspace built; nothing to fuzz".
+func TestAChildInheritsOnlyTheLockItsParentNames(t *testing.T) {
+	mine, other := t.TempDir(), t.TempDir()
+
+	parent, err := Acquire(mine, "campaign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Release()
+
+	// Without the hand-off, the child is refused -- which was the bug.
+	if _, err := Acquire(mine, "build"); err == nil {
+		t.Fatal("a second holder was allowed without the hand-off")
+	}
+
+	t.Setenv(EnvHeld, mine)
+
+	// The named workspace: allowed, and Release on the nil lock is safe.
+	l, err := Acquire(mine, "build")
+	if err != nil {
+		t.Fatalf("a child was refused its parent's lock: %v", err)
+	}
+	l.Release()
+
+	// ONLY the named one. An unrelated workspace is still locked normally, or
+	// the hand-off would be a way to disable locking generally.
+	l2, err := Acquire(other, "build")
+	if err != nil {
+		t.Fatalf("an unrelated workspace could not be locked: %v", err)
+	}
+	defer l2.Release()
+	if _, err := Acquire(other, "build2"); err == nil {
+		t.Error("the hand-off disabled locking for a workspace it did not name")
+	}
+}

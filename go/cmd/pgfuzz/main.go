@@ -1308,7 +1308,7 @@ func cmdCampaign(argv []string) int {
 				c.Name, out)
 			return 2
 		default:
-			if err := buildIntoCampaign(slugDir, c.Name, out); err != nil {
+			if err := buildIntoCampaign(slugDir, c.Name, out, dir); err != nil {
 				// LOUD, and recorded, but not fatal to the whole campaign.
 				// One major whose plugins will not compile must not cost the
 				// other four their two hours -- and a workspace that silently
@@ -4670,7 +4670,7 @@ func reownPaths(paths []string, dry bool) int {
 //
 // The log is teed to stderr as well, because a build that only writes to a file
 // looks like a hang to whoever is watching the terminal.
-func buildIntoCampaign(slugDir, ws, dest string) error {
+func buildIntoCampaign(slugDir, ws, dest, wsDir string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -4686,6 +4686,11 @@ func buildIntoCampaign(slugDir, ws, dest string) error {
 		ws, dest, logPath)
 
 	cmd := exec.Command(self, "build", "-w", ws, "-into", dest)
+	// The campaign already holds this workspace's lock; tell the child so it
+	// does not refuse itself.
+	if abs, err := filepath.Abs(wsDir); err == nil {
+		cmd.Env = append(os.Environ(), wslock.EnvHeld+"="+abs)
+	}
 	sink := io.MultiWriter(f, os.Stderr)
 	cmd.Stdout, cmd.Stderr = sink, sink
 	if err := cmd.Run(); err != nil {

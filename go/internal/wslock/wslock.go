@@ -25,6 +25,11 @@ import (
 	"time"
 )
 
+// EnvHeld names a workspace whose lock the calling process already holds, for
+// a child it spawns. Set deliberately and read once; it is not a way to
+// disable locking generally.
+const EnvHeld = "PGFUZZ_LOCK_HELD"
+
 // Holder is what the lock file records, so a refusal can name the process
 // rather than just decline.
 type Holder struct {
@@ -53,6 +58,18 @@ func (b Busy) Error() string {
 // the work ("build", "sweep", "campaign") because "workspace is in use" with
 // no subject sends people to `ps`.
 func Acquire(wsDir, what string) (*Lock, error) {
+	// ALREADY HELD BY OUR PARENT.
+	//
+	// A campaign holds the lock for the whole run and then spawns `pgfuzz
+	// build` as a subprocess, which asked for the same lock and was refused --
+	// so a campaign could never build a workspace it had locked, and reported
+	// "no workspace built; nothing to fuzz". The parent names what it holds,
+	// and only that: an unrelated workspace is still locked normally.
+	if held := os.Getenv(EnvHeld); held != "" {
+		if abs, err := filepath.Abs(wsDir); err == nil && abs == held {
+			return nil, nil
+		}
+	}
 	path := filepath.Join(wsDir, ".pgfuzz.lock")
 	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR, 0o644)
 	if err != nil {
