@@ -4587,10 +4587,10 @@ func cmdTriageReport(argv []string) int {
 		fmt.Fprintf(&b, "> **Scoped to %s.** %d of %d write-ups name a matching\n",
 			strings.Join(wsPat, ", "), len(findings), len(findings)+dropped)
 		b.WriteString("> workspace; the rest belong to other campaigns and are not listed.\n>\n")
-		b.WriteString("> Attribution is by workspace names mentioned in the prose. No field in a\n")
-		b.WriteString("> write-up records which campaign produced it, so this is inference, not\n")
-		b.WriteString("> provenance: a finding whose author did not name a workspace cannot be\n")
-		b.WriteString("> placed and is absent here.\n>\n")
+		b.WriteString("> Each entry below shows what placed it. A **Campaign:** field is the\n")
+		b.WriteString("> write-up answering directly; a workspace name is inference from the prose,\n")
+		b.WriteString("> used where the field says the campaign is not established. A finding with\n")
+		b.WriteString("> neither cannot be placed and is absent here.\n>\n")
 		if len(notPat) > 0 {
 			fmt.Fprintf(&b, "> Findings matching %s are excluded by name.\n>\n",
 				strings.Join(notPat, ", "))
