@@ -51,6 +51,25 @@ const (
 	DefaultPreflightGB = 15
 )
 
+// HangGrace is how long past its own budget a slice may run before it is
+// stopped.
+//
+// A SLICE HAD NO UPPER BOUND AT ALL. libFuzzer is given -max_total_time, and
+// honours it by checking the clock between executions -- so a single input
+// that never returns runs forever, and `docker run` with it. The campaign then
+// waits on that slice for the rest of the run: not a crash, not a timeout in
+// the series, just a workspace that stops producing and a driver that looks
+// alive.
+//
+// The shell driver caught this from OUTSIDE, with a watchdog process that
+// killed containers past their budget. That was ported -- `pgfuzz watchdog` --
+// and nothing ever starts it, so it guards only the runs where somebody
+// remembered to open a second terminal. The bound belongs where the run is.
+//
+// Five minutes, matching the watchdog's grace: long enough that a slow
+// shutdown or a final corpus write is not mistaken for a hang.
+const HangGrace = 5 * time.Minute
+
 type Request struct {
 	Workspace string // the workspace directory
 	// Data is where the corpus, artifacts, lineage and run scratch live.
@@ -109,6 +128,11 @@ type Result struct {
 	// executions for a reason that has nothing to do with the target, and a
 	// ratchet comparing it against a full slice would call that a regression.
 	DiskStop bool
+	// Hung is whether the slice was stopped for running past its own budget.
+	// It is a fact about the TARGET -- one input that never returns -- and
+	// belongs in the record, unlike a disk stop, which is a fact about the
+	// machine.
+	Hung bool
 	// Harvested is how many reproducers this run moved out of the scratch
 	// overlay. Recorded separately from the artifacts delta so "found three"
 	// and "the directory happens to hold three more" stay distinguishable.
@@ -240,6 +264,15 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		sink = io.MultiWriter(lf, r.Stream)
 	}
 
+	// THE HARD DEADLINE, and the disk floor, share one guard.
+	//
+	// docker stop rather than killing the docker CLI: exec.CommandContext
+	// would kill the client and leave the container running, which is how a
+	// "timed out" slice keeps a core busy for the rest of the campaign.
+	// Stopping sends SIGTERM first, so libFuzzer prints the final stats this
+	// slice is judged on before it goes.
+	hardStop := time.Duration(r.Seconds)*time.Second + HangGrace
+
 	// THE DISK FLOOR, armed for as long as the slice runs.
 	//
 	// docker stop on THIS container by name, not a kill by ancestor image: a
@@ -247,30 +280,40 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	// wrong. Stopping is enough -- libFuzzer's corpus is already on disk, and
 	// the harvest below still runs.
 	stopGuard := make(chan struct{})
-	var diskStopped atomic.Bool
-	if r.StopFreeGB > 0 {
-		go func() {
-			t := time.NewTicker(30 * time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-stopGuard:
-					return
-				case <-t.C:
-					free, err := freeGB(data)
-					if err != nil || free >= r.StopFreeGB {
-						continue
-					}
-					diskStopped.Store(true)
-					fmt.Fprintf(os.Stderr,
-						"pgfuzz: only %.1f GB free where %s writes -- stopping %s\n",
-						free, data, name)
-					exec.Command("docker", "stop", "-t", "5", name).Run()
-					return
+	var diskStopped, hung atomic.Bool
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		deadline := time.After(hardStop)
+		for {
+			select {
+			case <-stopGuard:
+				return
+			case <-deadline:
+				hung.Store(true)
+				fmt.Fprintf(os.Stderr,
+					"pgfuzz: %s ran %s past its %ds budget -- stopping it\n",
+					name, HangGrace, r.Seconds)
+				// -t 20: SIGTERM, then twenty seconds for the final stats.
+				exec.Command("docker", "stop", "-t", "20", name).Run()
+				return
+			case <-t.C:
+				if r.StopFreeGB <= 0 {
+					continue
 				}
+				free, err := freeGB(data)
+				if err != nil || free >= r.StopFreeGB {
+					continue
+				}
+				diskStopped.Store(true)
+				fmt.Fprintf(os.Stderr,
+					"pgfuzz: only %.1f GB free where %s writes -- stopping %s\n",
+					free, data, name)
+				exec.Command("docker", "stop", "-t", "5", name).Run()
+				return
 			}
-		}()
-	}
+		}
+	}()
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = sink, sink
@@ -285,6 +328,7 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		CorpusFrom: before,
 		CorpusTo:   countFiles(corpus),
 		DiskStop:   diskStopped.Load(),
+		Hung:       hung.Load(),
 	}
 
 	// HARVEST THE REPRODUCERS BEFORE ANYTHING ELSE LOOKS AT THE COUNTS.

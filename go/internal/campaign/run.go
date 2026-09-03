@@ -258,6 +258,7 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			// NON-nil pointer and defeats that guard exactly.
 			CorpusBefore: r.CorpusFrom,
 			DiskStop:     r.DiskStop,
+			Hung:         r.Hung,
 			// The slice's OWN artifacts, not the directory's total. The
 			// total is weeks of accumulation and would read as this run's
 			// output on every dashboard that shows it.
@@ -315,6 +316,13 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 	}
 	if len(cut) > 0 {
 		say("  DISK FLOOR cut %d slice(s): %s", len(cut), strings.Join(cut, " "))
+	}
+	// Said, because it is a finding rather than an accident of the machine:
+	// something in that target does not return.
+	for _, r := range res {
+		if r.Hung {
+			say("  !! %s HUNG past its budget and was stopped", r.Target)
+		}
 	}
 	if c.AfterSweep != nil {
 		c.AfterSweep(e, round, complete, reasonNotJudgeable(complete, cut))

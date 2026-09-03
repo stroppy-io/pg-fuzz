@@ -79,6 +79,15 @@ type Slice struct {
 	// comparing it against a full one would call that a regression -- the
 	// gate crying wolf about the filesystem.
 	DiskStop bool `json:"disk_stop,omitempty"`
+
+	// Hung marks a slice stopped for running past its own budget.
+	//
+	// Unlike DiskStop this is evidence ABOUT THE TARGET -- one input that
+	// never returned -- so it does not disqualify the round from being
+	// judged. It is recorded because a hang is a finding, and a slice that
+	// produced few executions because it was stuck on one input is a
+	// different fact from one that was simply slow.
+	Hung bool `json:"hung,omitempty"`
 	// Artifacts is what THIS slice produced. The before/after pair is kept
 	// beside it so the total is still recoverable and the delta is never
 	// re-derived by subtracting two numbers a reader had to find.
