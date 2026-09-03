@@ -91,11 +91,11 @@ func TestEveryUncheckableCaseSkipsWithAReason(t *testing.T) {
 }
 
 func TestTargetAndWorkspaceAreReadFromProse(t *testing.T) {
-	f := Finding{FoundBy: "`spi_query_fuzzer` on **pg17-10-1c-und**, round 4."}
+	f := Finding{FoundBy: "`spi_query_fuzzer` on **pg17-10-ext-und**, round 4."}
 	if got := TargetOf(f); got != "spi_query_fuzzer" {
 		t.Errorf("TargetOf = %q", got)
 	}
-	if got := WorkspaceOf(f); got != "pg17-10-1c-und" {
+	if got := WorkspaceOf(f); got != "pg17-10-ext-und" {
 		t.Errorf("WorkspaceOf = %q", got)
 	}
 	// "source analysis" is deliberately distinct from a fuzzer.
