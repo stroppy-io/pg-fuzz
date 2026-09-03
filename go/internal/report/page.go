@@ -109,6 +109,34 @@ with different names.</p></div>
 {{end}}
 </section>
 
+{{if .UnderTest}}
+<section>
+<h2>What was tested</h2>
+<p class="muted">As the campaign sealed it. A run against a patched tree or a
+set of extensions is not reproducible unless it says which — so the commit that
+was <em>compiled</em> is recorded here, not the branch name, which moves.</p>
+<div class="wrap">
+<table>
+<thead><tr><th>Workspace</th><th>Ref</th><th>Commit</th><th>Sanitizer</th><th>Patches</th><th>Extensions</th></tr></thead>
+<tbody>
+{{range .UnderTest}}<tr>
+<td><code>{{.Name}}</code>{{if not .BuildOK}} <span class="bad">build failed</span>{{end}}</td>
+<td><code>{{.Ref}}</code></td>
+<td><code>{{short .SHA}}</code></td>
+<td>{{.Sanitizer}}</td>
+<td>{{if .Patches}}{{range .Patches}}<code>{{.}}</code><br>{{end}}{{else}}<span class="muted">none</span>{{end}}</td>
+<td>{{if .Plugins}}{{range .Plugins}}<code>{{.}}</code> {{end}}{{else}}<span class="muted">none</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{if not .Sealed}}<div class="note"><p><strong>This campaign was not
+sealed.</strong> It shared each workspace's corpus, so its coverage cannot be
+re-measured from this slug alone: the corpus it ran against has since moved
+on.</p></div>{{end}}
+</section>
+{{end}}
+
 {{with .Coverage}}
 <section>
 <h2>Coverage</h2>

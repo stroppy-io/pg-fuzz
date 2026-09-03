@@ -2185,6 +2185,13 @@ func writeHTML(r paths.Roots, slug string, s campaign.Series, covWS, out string)
 	}
 
 	d, err := report.Gather(slug, s, filepath.Join(r.WS, "FINDINGS"), cov)
+	// WHAT WAS UNDER TEST comes from the campaign's own sealed manifest.
+	// Absent is not an error: `report -final` and the older slugs predate it,
+	// and a missing section is honest where an empty one would read as "no
+	// patches, no plugins, unknown commit".
+	if m, merr := campaign.ReadManifest(filepath.Join(r.WS, "campaigns", slug)); merr == nil {
+		d.WithManifest(m)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2

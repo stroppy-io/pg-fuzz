@@ -42,6 +42,15 @@ type Data struct {
 	Artifacts  int
 	Workspaces []WorkspaceRow
 
+	// WHAT WAS UNDER TEST. A report is handed to somebody who was not here
+	// and, increasingly, to a vendor being asked to fix something. Numbers
+	// without the commit, the patch series and the plugin pins are not a
+	// result -- they are a claim about an unnamed system. The manifest has
+	// carried all of it since the campaign sealed it; the page did not show
+	// any of it.
+	UnderTest []UnderTestRow
+	Sealed    bool
+
 	Coverage     *coverage.Summary
 	Findings     []findings.Finding
 	ByArea       []AreaRow
@@ -73,6 +82,35 @@ type TargetRow struct {
 }
 
 // Gather assembles the data from the record.
+// UnderTestRow is one workspace's provenance, as the sealed manifest recorded
+// it.
+type UnderTestRow struct {
+	Name      string
+	Ref       string
+	SHA       string
+	Sanitizer string
+	Plugins   []string
+	Patches   []string
+	BuildOK   bool
+	Note      string
+}
+
+// WithManifest attaches what the campaign sealed about its own builds.
+//
+// Absent or unreadable is not fatal and not silent: the section simply does
+// not render, rather than rendering empty and reading as "nothing was
+// patched, no plugins, unknown commit".
+func (d *Data) WithManifest(m campaign.Manifest) {
+	d.Sealed = m.Sealed
+	for _, e := range m.Entries {
+		d.UnderTest = append(d.UnderTest, UnderTestRow{
+			Name: e.Workspace, Ref: e.Ref, SHA: e.SHA,
+			Sanitizer: e.Sanitizer, Plugins: e.Plugins,
+			Patches: e.Patches, BuildOK: e.BuildOK, Note: e.Note,
+		})
+	}
+}
+
 func Gather(slug string, series campaign.Series, findingsRoot string, cov *coverage.Summary) (Data, error) {
 	d := Data{Slug: slug, Generated: time.Now().UTC(), Coverage: cov}
 
@@ -154,6 +192,17 @@ func sortTargets(r []TargetRow) {
 func Render(w io.Writer, d Data) error {
 	t, err := template.New("report").Funcs(template.FuncMap{
 		"comma": comma,
+		// A commit is quoted at twelve characters everywhere in this project:
+		// long enough to be unambiguous, short enough to read in a table.
+		"short": func(sha string) string {
+			if len(sha) > 12 {
+				return sha[:12]
+			}
+			if sha == "" {
+				return "—"
+			}
+			return sha
+		},
 		"pct": func(c coverage.Counted) string {
 			return fmt.Sprintf("%.2f%%", c.Pct())
 		},
