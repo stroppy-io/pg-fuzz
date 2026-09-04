@@ -118,6 +118,12 @@ func drawHeader(s *term.Screen, m Model) {
 // thing anyone looking at a dashboard wants to know. Model.Hours was declared
 // and never assigned, so there was nothing to measure it against.
 func headerClock(m Model) string {
+	// SAID, NOT SHOWN AS ZERO. "elapsed 0h00m" for a campaign with 29 finished
+	// slices is a lie of a different kind from the overflow it replaced: the
+	// run took time, and what is missing is the record of when it started.
+	if m.Started.IsZero() {
+		return term.Dim + "elapsed unknown (no start time recorded)" + term.Reset
+	}
 	el := m.Elapsed()
 	out := fmt.Sprintf("elapsed %dh%02dm", int(el.Hours()), int(el.Minutes())%60)
 	if m.Hours <= 0 {
@@ -308,6 +314,15 @@ func drawFooter(s *term.Screen, m Model, v View) {
 	// EVERY KEY THAT EXISTS. A view reachable only by somebody who read the
 	// source is not reachable.
 	keys := "q quit   g grid   d detail   b components   h history   f filter   up/down select"
+	// EXCEPT WHERE NOTHING CAN BE PRESSED. In a log there is no keyboard, and
+	// the error is the only half of this line worth printing.
+	if m.Snapshot {
+		if m.Err == "" {
+			return
+		}
+		s.Line(s.Rows, term.Yellow+m.Err+term.Reset)
+		return
+	}
 	if m.Err != "" {
 		keys = term.Yellow + m.Err + term.Reset + "   " + keys
 	}

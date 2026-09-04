@@ -2328,10 +2328,17 @@ func cmdTUI(argv []string) int {
 	// `pgfuzz tui | head` should show the dashboard, not escape codes.
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		m := tui.LoadWithPanels(r.Campaigns(), *slug, r.Home, r.WS)
+		// A FRAME FOR A LOG, not a terminal pretending to be one. Snapshot
+		// drops the keybindings, which nobody reading a CI page can press.
+		m.Snapshot = true
 		s := term.Screen{Plain: true}
 		tui.Draw(&s, m, tui.Grid, 0, 40, 200)
-		s.Flush(os.Stdout)
-		fmt.Println()
+
+		// TRIMMED, because a fixed 40-row canvas is right for a screen and
+		// wrong for a log: a one-workspace campaign left twenty blank lines
+		// between the dashboard and whatever came next, which reads as the
+		// output having stopped.
+		fmt.Println(strings.TrimRight(s.Text(), " \n"))
 		return 0
 	}
 

@@ -119,6 +119,14 @@ type Model struct {
 	// say it is filtered reads as a campaign that lost workspaces.
 	RowsTotal int
 	Filter    string
+	// Snapshot means this frame is going into a LOG, not onto a terminal.
+	//
+	// A dashboard written to a CI step log is read once, by somebody who
+	// cannot press anything, so "q quit  g grid  d detail" is furniture at
+	// best and an invitation to try something impossible at worst. The
+	// footer's OTHER half -- whatever went wrong reading docker -- still
+	// matters and still prints.
+	Snapshot bool
 	// Breakdown is crashes by component, for the view `b` opens. Filled only
 	// in LoadWithPanels, which is the path that knows where the workspaces
 	// are.
@@ -498,11 +506,17 @@ func Load(campaignsRoot, slug string) Model {
 // reported 76 hours elapsed, in the same field a live campaign uses. A
 // campaign that is not running is measured to its last recorded slice.
 func (m Model) Elapsed() time.Duration {
-	if !m.Live && !m.LastSlice.IsZero() {
-		return m.LastSlice.Sub(m.Started)
-	}
+	// NO START, NO ELAPSED. The zero check guarded the second branch and not
+	// the first, so a campaign with slices but no recorded start subtracted
+	// from year one and the header read "elapsed 2562047h47m" -- a duration
+	// clamped at its maximum, printed as if it were a measurement. It shows
+	// up whenever live/campaign.json is missing, which is exactly the case
+	// where a reader most needs to be told something is absent.
 	if m.Started.IsZero() {
 		return 0
+	}
+	if !m.Live && !m.LastSlice.IsZero() {
+		return m.LastSlice.Sub(m.Started)
 	}
 	return time.Since(m.Started)
 }

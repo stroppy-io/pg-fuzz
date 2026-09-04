@@ -93,6 +93,20 @@ step() {
 step "campaign" pgfuzz campaign -slug "$SLUG" -sealed -w "$WS" -no-pin \
 	-hours "${HOURS:-0.35}" -time "$SECS" -jobs 2 -on-deadline cut -profile smoke
 
+# THE DASHBOARD, on the front page of the run.
+#
+# WHAT THE STEP LOG IS FOR. Everything verbose is folded into a ::group:: or
+# written to a file that gets uploaded -- build.log, the per-target run logs,
+# the report, the bundle. What is left on the page unfolded is this: the same
+# grid `pgfuzz tui` draws on a terminal, as one frame. Opening a run should
+# show the state of the campaign, not six thousand lines of make.
+#
+# One frame after the campaign, so the page shows what was built and swept
+# before the verdicts start arriving. It is a snapshot, so it carries no
+# keybindings; a reader of a log cannot press anything.
+frame() { printf '\n'; pgfuzz tui -slug "$SLUG" || :; }
+frame
+
 # THE GATES, over the campaign's OWN logs. -logs is the flag that was missing
 # for the whole of this port's life: a sealed campaign writes under the slug,
 # and pointing the gates at the workspace judges an earlier run.
@@ -160,6 +174,11 @@ step "inventory" pgfuzz inventory -w "$WS"
 # that absence is never a pass. But a smoke run is asking whether the command
 # RUNS, and a healthy workspace has no crashes to attribute.
 step "breakdown" bash -c 'pgfuzz breakdown -w "$0" || [ $? -eq 2 ]' "$WS"
+
+# AND THE LAST FRAME, after everything has run. The first showed what the
+# campaign built; this shows where it finished, and it is the thing somebody
+# scrolling to the bottom of a green run should find.
+frame
 
 echo
 if [ ${#FAILED[@]} -eq 0 ]; then
