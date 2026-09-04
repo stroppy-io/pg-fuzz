@@ -83,7 +83,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
                   [-show|-cusum|-activity|-distribution|-variance]
                   [-reseed <target> -reason "..." [-since ISO]]
                   [-profile NAME]   an isolated baseline, series and history
-  pgfuzz bootstrap [-cache DIR]
+  pgfuzz bootstrap [-cache DIR] [-shallow] [-only postgres,oss-fuzz]
   pgfuzz pin    [-check] [-update -reason "..."] [-pg <ref> [-reason "..."]]
   pgfuzz corpus -w <ws> [-repair] [-seed-from <ws> [-with-archived]]
                         [-minimize [-cap N]]
@@ -1360,6 +1360,11 @@ func cmdCampaign(argv []string) int {
 	jobs := fs.Int("jobs", 1, "parallel jobs per target")
 	par := fs.Int("parallel", 1, "workspaces sweeping at once")
 	onDeadline := fs.String("on-deadline", "cut", "cut | finish-sweep | finish-round")
+	// A SMOKE RUN IS NOT A CAMPAIGN, and the pin exists to make a campaign
+	// reproducible. Five moving branches drift constantly, so enforcing pins
+	// in a run whose point is "does the code path work" makes it red for a
+	// reason that has nothing to do with the code.
+	noPin := fs.Bool("no-pin", false, "build a pinned ref that has moved (for a smoke run)")
 	profile := fs.String("profile", "main", "ratchet profile: an isolated baseline, series and history\n"+
 		"    	use one for an experiment, so it cannot raise the production floors")
 	maxOverrun := fs.Duration("max-overrun", 0, "cap on overrun (default: one sweep)")
@@ -1380,6 +1385,11 @@ func cmdCampaign(argv []string) int {
 
 	r := paths.Resolve()
 	slugDir := filepath.Join(r.Campaigns(), *slug)
+	// Passed to every build this campaign makes.
+	var buildExtra []string
+	if *noPin {
+		buildExtra = append(buildExtra, "-no-pin")
+	}
 	if err := os.MkdirAll(filepath.Join(slugDir, "ws"), 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 2
@@ -1458,7 +1468,7 @@ func cmdCampaign(argv []string) int {
 				c.Name, out)
 			return 2
 		default:
-			if err := buildIntoCampaign(slugDir, c.Name, out, dir); err != nil {
+			if err := buildIntoCampaign(slugDir, c.Name, out, dir, buildExtra...); err != nil {
 				// LOUD, and recorded, but not fatal to the whole campaign.
 				// One major whose plugins will not compile must not cost the
 				// other four their two hours -- and a workspace that silently
@@ -2895,6 +2905,18 @@ func dash(s string) string {
 func cmdBootstrap(argv []string) int {
 	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
 	cache := fs.String("cache", "", "where the clones live (default $PGFUZZ_CACHE)")
+	// SHALLOW, for a machine that will build one ref and be thrown away.
+	//
+	// PostgreSQL's full history is 1 GB and a CI runner has about fourteen to
+	// spend on everything. A shallow clone of the refs actually being built is
+	// ~250 MB and exports identically -- `git archive <ref>` does not care how
+	// much history is behind it.
+	//
+	// Not the default: a working host wants the history, because a bisect, a
+	// pin check and `git describe` all need it, and re-cloning to get it back
+	// costs more than keeping it.
+	shallow := fs.Bool("shallow", false, "clone without history (for a disposable machine)")
+	only := fs.String("only", "", "clone only these repos (comma-separated: postgres,oss-fuzz,...)")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
@@ -2931,13 +2953,23 @@ func cmdBootstrap(argv []string) int {
 		{"orioledb", "https://github.com/orioledb/orioledb.git"},
 		{"oss-fuzz", "https://github.com/google/oss-fuzz.git"},
 	} {
+		if *only != "" && !slicesContains(strings.Split(*only, ","), c.dir) {
+			continue
+		}
 		dst := filepath.Join(r.Cache, c.dir)
 		if fileExists(filepath.Join(dst, ".git")) {
 			fmt.Printf("  have %s\n", c.dir)
 			continue
 		}
 		fmt.Printf("  cloning %s into %s\n", c.dir, dst)
-		cmd := exec.CommandContext(ctx, "git", "clone", c.url, dst)
+		args := []string{"clone"}
+		if *shallow {
+			// Every branch, no history: a build names a ref and the export
+			// needs that ref to exist, but nothing needs its ancestors.
+			args = append(args, "--depth", "1", "--no-single-branch")
+		}
+		args = append(args, c.url, dst)
+		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: cloning %s: %v\n", c.dir, err)
@@ -5464,7 +5496,7 @@ func reownPaths(paths []string, dry bool) int {
 //
 // The log is teed to stderr as well, because a build that only writes to a file
 // looks like a hang to whoever is watching the terminal.
-func buildIntoCampaign(slugDir, ws, dest, wsDir string) error {
+func buildIntoCampaign(slugDir, ws, dest, wsDir string, extra ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -5479,7 +5511,8 @@ func buildIntoCampaign(slugDir, ws, dest, wsDir string) error {
 	fmt.Fprintf(os.Stderr, "==> %s: building into the campaign\n    %s\n    log %s\n",
 		ws, dest, logPath)
 
-	cmd := exec.Command(self, "build", "-w", ws, "-into", dest)
+	args := append([]string{"build", "-w", ws, "-into", dest}, extra...)
+	cmd := exec.Command(self, args...)
 	// The campaign already holds this workspace's lock; tell the child so it
 	// does not refuse itself.
 	if abs, err := filepath.Abs(wsDir); err == nil {
@@ -5701,6 +5734,17 @@ func refuseOrphans() error {
 		return fmt.Errorf("%s\n  or set PGFUZZ_NO_ORPHAN_CHECK=1", msg)
 	}
 	return nil
+}
+
+// slicesContains is the one-line helper this file needs twice and the
+// standard library grew after the go directive this module targets.
+func slicesContains(hay []string, needle string) bool {
+	for _, h := range hay {
+		if strings.TrimSpace(h) == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func loadBudgets(r paths.Roots) fuzz.Budgets {

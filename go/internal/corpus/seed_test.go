@@ -24,6 +24,13 @@ func TestSeedSeparatesFailuresFromDuplicates(t *testing.T) {
 		}
 		return p
 	}
+	// PERMISSIONS MEAN NOTHING TO ROOT, and CI containers run as root: a
+	// 0000 file is readable, so the unreadable case cannot be staged at all.
+	// Skipped before anything is asserted rather than half way through, which
+	// is how this failed under act with "copied 2, want 1".
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: an unreadable file is still readable")
+	}
 	mk(src, "jsonb_fuzzer", "aaa", 0o644) // copies
 	mk(src, "jsonb_fuzzer", "bbb", 0o644) // already present below
 	mk(dst, "jsonb_fuzzer", "bbb", 0o644)
@@ -38,9 +45,6 @@ func TestSeedSeparatesFailuresFromDuplicates(t *testing.T) {
 	}
 	if res.Present != 1 {
 		t.Errorf("present %d, want 1", res.Present)
-	}
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: an unreadable file is still readable")
 	}
 	if res.Failed != 1 {
 		t.Errorf("failed %d, want 1 for %s", res.Failed, unreadable)

@@ -97,8 +97,14 @@ func TestArchiveWritesASealedRunTheIndexCanRead(t *testing.T) {
 
 	// WRITE-ONCE. The index page asserts this on the directory's behalf; until
 	// now nothing enforced it.
-	if err := os.WriteFile(filepath.Join(run, "probe"), []byte("x"), 0o644); err == nil {
-		t.Error("the run directory is writable; the seal did not hold")
+	//
+	// ROOT IGNORES THE MODE BITS, and CI containers run as root, so this
+	// cannot be checked there -- a 0555 directory is writable to uid 0. The
+	// seal is still applied; what cannot be observed is the refusal.
+	if os.Geteuid() != 0 {
+		if err := os.WriteFile(filepath.Join(run, "probe"), []byte("x"), 0o644); err == nil {
+			t.Error("the run directory is writable; the seal did not hold")
+		}
 	}
 	if !strings.Contains(out, "sealed") {
 		t.Errorf("archive did not report sealing:\n%s", out)

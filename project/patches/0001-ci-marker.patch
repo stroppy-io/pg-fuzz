@@ -1,0 +1,35 @@
+Subject: [PATCH] pgfuzz CI: a marker proving the patch pipeline ran
+
+WHY THIS EXISTS.
+
+A workspace can declare `patch=`, and until this repository's audit nothing
+applied it -- the code was written, tested and called by nobody. It is wired
+now, and the only thing standing between that and the next silent regression is
+a test that a real patch reaches a real build.
+
+Vendor patches cannot serve: they are not ours to ship, they target one minor
+version, and they rewrite planner behaviour. This one adds a FILE THAT NOTHING
+COMPILES, so it applies cleanly to every major from 16 to master and cannot
+change what is built. What it proves is the pipeline: the series applied, no
+.rej survived, the patch was hashed into the build record, and the inventory
+can name it.
+
+If this file is missing from a built tree, the patch step did not run.
+---
+ src/pgfuzz_ci_marker.txt | 7 +++++++
+ 1 file changed, 7 insertions(+)
+ create mode 100644 src/pgfuzz_ci_marker.txt
+
+diff --git a/src/pgfuzz_ci_marker.txt b/src/pgfuzz_ci_marker.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/pgfuzz_ci_marker.txt
+@@ -0,0 +1,7 @@
++pgfuzz CI patch marker.
++
++This file is added by project/patches/0001-ci-marker.patch so that CI can
++prove a workspace patch series was applied to the tree that was built.
++
++Nothing compiles it. If it is absent from a build whose workspace declares
++patch=, the patch step did not run.

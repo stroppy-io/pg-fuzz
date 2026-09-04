@@ -1,0 +1,208 @@
+name: sweep
+
+# THE PIPELINE, END TO END, WITH THE BUDGETS TURNED DOWN.
+#
+# The purpose is not to fuzz. It is to make sure that when somebody commits ten
+# or twenty hours of machine time to a real campaign, they are not doing it on
+# top of a botched script -- and the only way to know that is to RUN the same
+# code path first, cheaply.
+#
+# So each item is a miniature campaign, not a bare sweep: it builds, seals,
+# rounds, gates, ratchets, reports, bundles and archives, exactly as an
+# overnight run does, with per-target budgets of seconds instead of minutes.
+# A bare sweep would exercise about a third of that and leave the rest -- the
+# manifest, the rounds, the gate wiring, the report, the bundle -- to be
+# discovered broken at hour nineteen.
+#
+# What it proves, per major and per sanitizer: the ref exports, the patch
+# series applies with no .rej, every declared plugin compiles and loads, all 23
+# targets build and EXECUTE, a campaign completes its rounds, the gates run and
+# read what the campaign wrote, and a report and a bundle can be produced from
+# it. That is the set of things this port broke repeatedly, none of it visible
+# from a unit test.
+#
+# WHAT IT DOES NOT PROVE: that the fuzzer finds anything. Every item starts
+# COLD, deliberately. Corpus size and coverage are both functions of time, so
+# neither is worth chasing in a run measured in seconds -- and caching a corpus
+# across a ten-item matrix against a 10 GB repository quota buys thrash rather
+# than reach. Treating a green run here as "no bugs" would be exactly the
+# artifact-versus-finding confusion the reports spend a section correcting.
+#
+# For the same reason nothing here measures coverage: a coverage build is
+# 4.6 GB against an address build's 1.5, and the number it produces after eight
+# seconds a target says nothing anyone should read.
+#
+# DISK. Measured on the fuzzing host: base-builder 3.15 GB, the project image
+# ~0.3 GB on top, a shallow PostgreSQL clone ~250 MB, the exported tree ~2.6 GB
+# and an address/undefined build 1.5 GB -- about 8.5 GB per item, against the
+# ~14 GB a runner starts with. Each matrix item is its own runner, so that is
+# 8.5 of 14, not 85 of 14. The reclaim step below buys another 20-30 GB because
+# the margin is otherwise thin, and a `coverage` build (4.6 GB) is deliberately
+# not in this matrix.
+#
+# pgfuzz refuses to build below 15 GB free. That threshold is right for the
+# fuzzing host, where a build competes with 65 workspaces and live campaigns,
+# and wrong for a disposable runner -- hence -no-disk-check here and nowhere
+# else.
+
+# MANUAL ONLY UNTIL IT HAS RUN ONCE.
+#
+# This workflow has never executed -- not here and not on GitHub. act cannot
+# run it, because the oss-fuzz build needs docker inside the runner container,
+# so nothing has yet observed whether the disk arithmetic holds on a real
+# runner or whether the artifact globs match anything.
+#
+# A ten-item matrix that fires on every push to main, having never run, is
+# exactly the unproven script this CI exists to catch. It gets its push trigger
+# back when a manual run has been green once. See TODO-ci.md.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'seconds per target (23 targets: 30s is ~12min, 300s is ~2h)'
+        default: '30'
+      majors:
+        description: 'space-separated refs, or empty for the full matrix'
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330   # under the 360 cap, so a hang is ours to report
+    strategy:
+      fail-fast: false     # one broken major must not hide the other nine
+      matrix:
+        ref: [REL_16_STABLE, REL_17_STABLE, REL_18_STABLE, REL_19_STABLE, master]
+        sanitizer: [address, undefined]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: false
+
+      # ~25 GB of preinstalled toolchains this never uses. The margin without
+      # it is about 5 GB, which is not a margin.
+      - name: reclaim disk
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/lib/jvm "$AGENT_TOOLSDIRECTORY" || true
+          docker image prune -af >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+      - name: build pgfuzz
+        run: cd go && go build -o "$HOME/.local/bin/pgfuzz" ./cmd/pgfuzz
+
+      - name: roots
+        run: |
+          # The four roots, all under the runner's own disk.
+          echo "PGFUZZ_HOME=$GITHUB_WORKSPACE"       >> "$GITHUB_ENV"
+          echo "PGFUZZ_WS=$RUNNER_TEMP/ws"           >> "$GITHUB_ENV"
+          echo "PGFUZZ_CACHE=$RUNNER_TEMP/cache"     >> "$GITHUB_ENV"
+          echo "WS=ci-${{ matrix.ref }}-${{ matrix.sanitizer }}" >> "$GITHUB_ENV"
+
+      - name: clone the substrate
+        run: |
+          mkdir -p "$PGFUZZ_WS" "$PGFUZZ_CACHE"
+          # Shallow, and only what a PostgreSQL build needs: the OrioleDB
+          # clones are another 700 MB this matrix never touches.
+          pgfuzz bootstrap -shallow -only postgres,oss-fuzz
+
+      - name: workspace
+        run: |
+          pgfuzz ws -new "$WS" -ref "origin/${{ matrix.ref }}" \
+                    -sanitizer "${{ matrix.sanitizer }}"
+          # A PATCH AND PLUGINS, because both are pipelines that were wired to
+          # nothing at some point in this port's history. The patch adds a file
+          # nothing compiles, so it applies to every major and cannot change
+          # what is built; what it proves is that the series ran at all.
+          conf="$PGFUZZ_WS/$WS/workspace.conf"
+          echo "patch=$GITHUB_WORKSPACE/project/patches/0001-ci-marker.patch" >> "$conf"
+          echo "plugins=pgaudit pg_background pgsql-http" >> "$conf"
+          cat "$conf"
+
+      - name: build
+        run: pgfuzz build -w "$WS" -no-disk-check
+
+      # THE PATCH REACHED THE TREE, asserted rather than assumed: this is the
+      # pipeline that was silently dead once already.
+      - name: the patch applied
+        run: |
+          grep -q '^patch_applied=' "$PGFUZZ_WS/$WS/workspace.conf" \
+            || { echo "the build recorded no applied patch"; exit 1; }
+          pgfuzz inventory -w "$WS" | grep -i 'ci-marker' \
+            || { echo "the inventory cannot name the patch"; exit 1; }
+
+      # A CAMPAIGN, because that is the code path a long run uses.
+      #
+      # Sealed, so the corpus is copied and the manifest written; two rounds,
+      # so rotation and the per-round gate hook both run; on-deadline cut, so
+      # the deadline path is exercised rather than assumed. Everything here is
+      # the overnight configuration with the clock turned down.
+      - name: campaign
+        run: |
+          secs='${{ github.event.inputs.seconds }}'
+          pgfuzz campaign -slug ci -sealed -w "$WS" \
+                          -hours 0.12 -time "${secs:-8}" -jobs 2 \
+                          -on-deadline cut -profile ci
+
+      # THE GATES, over the campaign's own logs. -logs is the flag that was
+      # missing for the whole of this port's life: a sealed campaign writes
+      # under the slug, and pointing the gates at the workspace judged an
+      # earlier run.
+      - name: gates
+        run: |
+          pgfuzz gate -w "$WS" \
+                      -logs "$PGFUZZ_WS/campaigns/ci/ws/$WS" -since 24h
+
+      # THE DOCUMENTS. A report and a bundle that cannot be produced are
+      # discovered at the end of a campaign, which is the worst time.
+      - name: report and bundle
+        run: |
+          pgfuzz report -slug ci -html "$RUNNER_TEMP/report.html" \
+                                 -md "$RUNNER_TEMP/report.md"
+          pgfuzz bundle -slug ci -o "$RUNNER_TEMP/bundle" -no-corpus
+          pgfuzz index -slug ci -o "$RUNNER_TEMP/index.html"
+
+      # THE THINGS THAT READ A FINISHED RUN.
+      - name: triage, census, inventory
+        run: |
+          pgfuzz census -w "$WS" -o "$RUNNER_TEMP/census" -summary
+          pgfuzz inventory -w "$WS" >/dev/null
+          pgfuzz breakdown -w "$WS" >/dev/null
+
+      - name: what it produced
+        if: always()
+        run: |
+          pgfuzz ws | grep "$WS" || true
+          find "$PGFUZZ_WS/$WS/artifacts" -type f \
+               \( -name 'crash-*' -o -name 'oom-*' -o -name 'timeout-*' -o -name 'leak-*' \) \
+               -printf '%p\n' 2>/dev/null | head -50
+
+      # A crash found here must be retrievable, or finding it was pointless.
+      - name: upload reproducers and record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sweep-${{ matrix.ref }}-${{ matrix.sanitizer }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/crash-*
+            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/oom-*
+            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/timeout-*
+            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/leak-*
+            ${{ runner.temp }}/ws/${{ env.WS }}/series.jsonl
+            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/*.samples.jsonl
+            ${{ runner.temp }}/ws/${{ env.WS }}/builds/*.log
+            ${{ runner.temp }}/ws/campaigns/ci/series.jsonl
+            ${{ runner.temp }}/ws/campaigns/ci/MANIFEST.json
+            ${{ runner.temp }}/ws/campaigns/ci/gate-failures.jsonl
+            ${{ runner.temp }}/report.md
+            ${{ runner.temp }}/index.html
