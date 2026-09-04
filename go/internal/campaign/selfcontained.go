@@ -280,6 +280,45 @@ func HasBuild(slugDir, ws string) bool {
 	return len(hits) > 0
 }
 
+// BuildFreshness is whether a build belongs to THIS run.
+//
+// THREE STATES, NOT TWO. The Python distinguished built-this-campaign from a
+// build left over from a previous run -- drawn `~` and excluded from the
+// header's built count -- from never built. HasBuild is a glob with no
+// timestamp test, so re-running a slug counted last week's binaries as this
+// run's build and the `~` disappeared from the legend with it.
+//
+// since is when the campaign started; a build older than that was not made by
+// it.
+type BuildFreshness int
+
+const (
+	NoBuild BuildFreshness = iota
+	StaleBuild
+	FreshBuild
+)
+
+// Freshness classifies a workspace's build against a campaign's start time.
+//
+// A zero `since` means "cannot tell", and everything built reads as fresh --
+// which is the old behaviour, and right when there is no start time to compare
+// against rather than a reason to claim staleness.
+func Freshness(slugDir, ws string, since time.Time) BuildFreshness {
+	hits, _ := filepath.Glob(filepath.Join(BuildDir(slugDir, ws), "*_fuzzer"))
+	if len(hits) == 0 {
+		return NoBuild
+	}
+	if since.IsZero() {
+		return FreshBuild
+	}
+	for _, h := range hits {
+		if fi, err := os.Stat(h); err == nil && !fi.ModTime().Before(since) {
+			return FreshBuild
+		}
+	}
+	return StaleBuild
+}
+
 // LiveDriver reports the pid of a campaign still running in this slug, or 0.
 //
 // BY THE PID, not by the marker file. A marker outlives kill -9, so trusting

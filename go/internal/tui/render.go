@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"pgfuzz/internal/campaign"
 	"strings"
 	"time"
 
@@ -31,9 +32,11 @@ const (
 //	                   bt br cf ...   rnd this  total   corpus   +new    cov   commit
 //	> gt-pg17          ·  ●  ··       r1  7/23      0      1.1k   +204   12.3%  61636c17b3
 //
-// cells:  ·· not built   × build failed   (blank) idle   ◐ building
+// cells:  ·· not built   ~ built by an earlier run   × build failed
 //
-//	● fuzzing   · swept clean   N reproducers
+//	        (blank) idle   ◐ building
+//
+//		● fuzzing   · swept clean   N reproducers
 const cellW = 3 // MINIMUM; CellWidth grows it to fill a wide window
 
 // CellWidth is the grid's cell width for a window of cols columns.
@@ -86,12 +89,34 @@ func drawHeader(s *term.Screen, m Model) {
 	if m.Live {
 		state = term.Green + "running" + term.Reset
 	}
-	el := m.Elapsed()
-	s.Line(1, fmt.Sprintf("%s%s%s  %s   %s   round %d   built %d/%d   reproducers %d   elapsed %dh%02dm",
+	clock := headerClock(m)
+	s.Line(1, fmt.Sprintf("%s%s%s  %s   %s   round %d   built %d/%d   reproducers %d   %s",
 		term.Bold, m.Slug, term.Reset, state,
-		phaseLabel(m), m.Round, m.Built, len(m.Rows), m.TotalArts,
-		int(el.Hours()), int(el.Minutes())%60))
+		phaseLabel(m), m.Round, m.Built, len(m.Rows), m.TotalArts, clock))
 	s.Line(2, term.Dim+"NOW: "+term.Reset+m.Activity)
+}
+
+// headerClock is the elapsed figure and what it is measured against.
+//
+// ELAPSED AGAINST WHAT. Elapsed alone cannot distinguish two hours into a
+// twenty-four hour run from two hours into a two hour one, which is the first
+// thing anyone looking at a dashboard wants to know. Model.Hours was declared
+// and never assigned, so there was nothing to measure it against.
+func headerClock(m Model) string {
+	el := m.Elapsed()
+	out := fmt.Sprintf("elapsed %dh%02dm", int(el.Hours()), int(el.Minutes())%60)
+	if m.Hours <= 0 {
+		return out
+	}
+	left := time.Duration(m.Hours*float64(time.Hour)) - el
+	if left > 0 {
+		return out + fmt.Sprintf(" of %gh  (%dh%02dm left)",
+			m.Hours, int(left.Hours()), int(left.Minutes())%60)
+	}
+	// Past the deadline is a state of its own: in-flight slices finish, no new
+	// one starts.
+	return out + fmt.Sprintf(" of %gh  %s(past the deadline -- draining)%s",
+		m.Hours, term.Yellow, term.Reset)
 }
 
 func phaseLabel(m Model) string {
@@ -229,6 +254,12 @@ func cell(r Row, target string, w int) (string, string) {
 		return center("◐", w), term.Yellow
 	case r.Failed:
 		return center("×", w), term.Red
+	case r.Freshness == campaign.StaleBuild:
+		// A BUILD FROM AN EARLIER RUN is not this run's build. It reads as
+		// built to every other check, so a re-run of a slug counted last
+		// week's binaries as its own and the header's built count was wrong
+		// in the direction that looks healthy.
+		return center("~", w), term.Dim
 	case !r.Built:
 		return center("··", w), term.Dim
 	}
@@ -425,7 +456,7 @@ func drawPanels(s *term.Screen, m Model, y int) int {
 	}
 	if y < s.Rows-2 {
 		s.Line(y, term.Dim+"cells:  ·· not built   × build failed   (blank) idle   "+
-			"◐ building   ● fuzzing   · swept   N reproducers"+term.Reset)
+			"◐ building   ● fuzzing   · swept   ~ earlier build   N reproducers"+term.Reset)
 		y++
 	}
 	if m.Status != "" {

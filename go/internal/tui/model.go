@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -51,8 +52,11 @@ type Row struct {
 	// Built and Failed come from the campaign's manifest: a workspace whose
 	// build failed is not the same as one that has not been built, and drawing
 	// both as "nothing here" is how a five-entry matrix says nothing at all.
-	Built  bool
-	Failed bool
+	Built bool
+	// Freshness separates a build this run made from one an earlier run left
+	// behind, which "Built" alone cannot.
+	Freshness campaign.BuildFreshness
+	Failed    bool
 	// Corpus, CorpusNew and CovPct are the three columns the old dashboard
 	// carried beside the grid: size now, what this round added, and what the
 	// coverage build measured.
@@ -81,6 +85,12 @@ type Model struct {
 	// LastSlice is when the newest slice was recorded, which is where a dead
 	// campaign's clock stops.
 	LastSlice time.Time
+	// Hours is the campaign's requested length, from its own state file.
+	//
+	// DECLARED AND NEVER ASSIGNED until now -- the exact reader-without-writer
+	// shape this package's own doc comment describes. campaign.State.Hours sat
+	// in campaign.json unread, so the header showed elapsed with nothing to
+	// measure it against and a reader could not tell 2h into 24 from 2h into 2.
 	Hours     float64
 	Live      bool
 	Round     int
@@ -161,6 +171,11 @@ func Load(campaignsRoot, slug string) Model {
 		var st campaign.State
 		if json.Unmarshal(b, &st) == nil {
 			m.RunID = st.RunID
+			// Recorded as a string in the state file; a campaign whose length
+			// cannot be parsed shows no deadline rather than a wrong one.
+			if h, err := strconv.ParseFloat(st.Hours, 64); err == nil {
+				m.Hours = h
+			}
 			if t, err := time.Parse(time.RFC3339, st.Started); err == nil {
 				m.Started = t
 			}
@@ -328,7 +343,10 @@ func Load(campaignsRoot, slug string) Model {
 		// Built from the directory, so it is right during the build phase too;
 		// the manifest only adds why a build FAILED, which it can only know
 		// once every build has been attempted.
-		w.Built = campaign.HasBuild(dir, name)
+		// Three states: built by this run, left over from an earlier one, or
+		// never. The middle one used to read as "built".
+		w.Freshness = campaign.Freshness(dir, name, m.Started)
+		w.Built = w.Freshness == campaign.FreshBuild
 		if b, ok := built[name]; ok {
 			w.Built, w.Failed = b, failed[name]
 		}
