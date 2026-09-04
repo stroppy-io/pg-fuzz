@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"pgfuzz/internal/term"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +85,38 @@ func TestHeaderShowsTheDeadline(t *testing.T) {
 	m.Hours = 0
 	if got := headerClock(m); strings.Contains(got, " of ") {
 		t.Errorf("a campaign with no recorded length claimed one: %q", got)
+	}
+}
+
+// A HOLE IN THE RUN AND A HOLE IN THE DISPLAY ARE DIFFERENT.
+//
+// Swept was decided from the series alone, so a slice that ran and died before
+// writing its row was indistinguishable from a target that never started --
+// and the detail view called both "never ran", sending somebody to look for a
+// container that did exist. The shell resolved this from three sources for
+// exactly that reason.
+func TestDetailSeparatesNoRecordFromNeverRan(t *testing.T) {
+	m := Model{
+		Slug:    "s",
+		Targets: []string{"ran_fuzzer", "logged_fuzzer", "absent_fuzzer"},
+		Rows: []Row{{
+			Name: "w", Built: true,
+			Cells: map[string]Cell{
+				"ran_fuzzer":    {Swept: true, Execs: 100},
+				"logged_fuzzer": {LoggedOnly: true},
+			},
+		}},
+	}
+	var scr term.Screen
+	scr.Reset(40, 120)
+	scr.Plain = true
+	drawDetail(&scr, m, 0)
+	got := scr.Text()
+
+	if !strings.Contains(got, "ran, no record") {
+		t.Errorf("a target with a log and no row is not distinguished:\n%s", got)
+	}
+	if !strings.Contains(got, "never ran") {
+		t.Errorf("a target with neither is not marked:\n%s", got)
 	}
 }

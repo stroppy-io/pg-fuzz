@@ -140,6 +140,10 @@ func (s *Screen) Line(row int, text string) {
 // Flush writes the frame.
 func (s *Screen) Flush(f *os.File) { f.WriteString(s.b.String()) }
 
+// Text is what has been drawn, for a test that needs to read the screen
+// rather than look at it.
+func (s *Screen) Text() string { return s.b.String() }
+
 // Colours, by name rather than number at the call site.
 const (
 	Reset  = "\x1b[0m"

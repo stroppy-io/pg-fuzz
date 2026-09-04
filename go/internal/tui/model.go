@@ -45,6 +45,14 @@ type Cell struct {
 	Artifacts    int
 	ArtifactsAll int
 	Round        int
+	// LoggedOnly means a log exists for this target but no series row does.
+	//
+	// A HOLE IN THE RUN AND A HOLE IN THE DISPLAY ARE DIFFERENT. Swept was
+	// decided from the series alone, so a slice that ran and died before
+	// writing its row was indistinguishable from a target that never started
+	// -- and the detail view called both "never ran". The shell resolved this
+	// from three sources for exactly that reason.
+	LoggedOnly bool
 }
 
 // Row is one workspace.
@@ -385,6 +393,27 @@ func Load(campaignsRoot, slug string) Model {
 			byWS[name] = &Row{Name: name, Cells: map[string]Cell{}}
 		}
 		byWS[name].Building = true
+	}
+
+	// THE LOGS ARE THE SECOND SOURCE. A target with a log and no series row
+	// ran; the record is what is missing, and saying "never ran" of it sends
+	// somebody to look for a container that did exist.
+	for name, w := range byWS {
+		data := campaign.WSDir(dir, name)
+		if _, err := os.Stat(data); err != nil {
+			continue // unsealed: its logs are in the workspace, not the slug
+		}
+		for _, t := range m.Targets {
+			c := w.Cells[t]
+			if c.Swept {
+				continue
+			}
+			hits, _ := filepath.Glob(filepath.Join(data, "artifacts", t, "run-*.log*"))
+			if len(hits) > 0 {
+				c.LoggedOnly = true
+				w.Cells[t] = c
+			}
+		}
 	}
 
 	running := RunningNow()

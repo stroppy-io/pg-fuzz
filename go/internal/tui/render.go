@@ -422,7 +422,16 @@ func drawDetail(s *term.Screen, m Model, sel int) {
 		if !ok || !c.Swept {
 			// Named anyway, and marked: a target missing from a detail view
 			// is indistinguishable from one that does not exist.
-			s.Line(row, fmt.Sprintf("  %-26s %s%14s%s", t, term.Yellow, "never ran", term.Reset))
+			//
+			// TWO DIFFERENT ABSENCES. A log with no series row means the
+			// slice RAN and its record is missing -- a hole in the display.
+			// No log at all means a hole in the run. Calling both "never ran"
+			// sends somebody looking for a container that did exist.
+			what := "never ran"
+			if c.LoggedOnly {
+				what = "ran, no record"
+			}
+			s.Line(row, fmt.Sprintf("  %-26s %s%14s%s", t, term.Yellow, what, term.Reset))
 			row++
 			continue
 		}
