@@ -69,6 +69,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz sweep -w <workspace> [-time S] [-jobs N] [-round N]
   pgfuzz campaign -slug NAME -hours H -w <ws> [-w <ws>...] [-on-deadline P]
                   [-sealed] [-jobs N] [-parallel N] [-time S] [-rebuild]
+                  [-profile NAME]   an isolated ratchet; use one for experiments
   pgfuzz report   -slug NAME [-html FILE] [-md FILE]
   pgfuzz report   -final [-prefix P] [-html FILE] [-md FILE] [-data FILE]
                          [-from <archived data.json>]
@@ -1275,6 +1276,8 @@ func cmdCampaign(argv []string) int {
 	jobs := fs.Int("jobs", 1, "parallel jobs per target")
 	par := fs.Int("parallel", 1, "workspaces sweeping at once")
 	onDeadline := fs.String("on-deadline", "cut", "cut | finish-sweep | finish-round")
+	profile := fs.String("profile", "main", "ratchet profile: an isolated baseline, series and history\n"+
+		"    	use one for an experiment, so it cannot raise the production floors")
 	maxOverrun := fs.Duration("max-overrun", 0, "cap on overrun (default: one sweep)")
 	sealed := fs.Bool("sealed", false, "give the campaign its own corpus, so the slug can be reported and moved")
 	rebuild := fs.Bool("rebuild", false, "rebuild even if the campaign already has a build")
@@ -1499,7 +1502,7 @@ func cmdCampaign(argv []string) int {
 		// judged, so nothing can ever regress. Without a caller the ratchet was
 		// a gate nobody ran.
 		AfterSweep: func(e campaign.Entry, round int, complete bool, notJudgeable string) {
-			gateAfterSweep(r, e, round, *jobs, notJudgeable)
+			gateAfterSweep(r, e, round, *jobs, notJudgeable, *profile)
 		},
 	})
 	if err != nil {
@@ -5446,7 +5449,7 @@ func loadBudgets(r paths.Roots) fuzz.Budgets {
 	return fuzz.LoadBudgets(filepath.Join(home, "scripts", "target-budgets.tsv"))
 }
 
-func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable string) {
+func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable, profile string) {
 	if notJudgeable != "" {
 		fmt.Fprintf(os.Stderr, "  gates skipped: %s\n", notJudgeable)
 		return
@@ -5489,13 +5492,20 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeab
 		"-since", roundWindow.String()); code == 1 {
 		fmt.Fprintf(os.Stderr, "  !! %s FAILED A GATE in round %d\n", e.Name, round)
 	}
+	// THE PROFILE, so an experiment cannot raise the production floors.
+	//
+	// -profile existed on `pgfuzz ratchet` and nowhere else, and the ratchet
+	// only ever raises: one throwaway campaign permanently lifted the floors
+	// every later production run is judged against, and undoing it is a hand
+	// edit of the baseline.
 	if code := run("ratchet check", "ratchet", "-w", e.Dir, "-logs", e.Data,
-		"-jobs", j); code == 1 {
+		"-profile", profile, "-jobs", j); code == 1 {
 		// Reported, not fatal. The campaign's job is to keep fuzzing; the
 		// regression is a fact about this round and the series records it.
 		fmt.Fprintf(os.Stderr, "  !! %s REGRESSED in round %d\n", e.Name, round)
 	}
-	run("ratchet update", "ratchet", "-w", e.Dir, "-logs", e.Data, "-update", "-jobs", j)
+	run("ratchet update", "ratchet", "-w", e.Dir, "-logs", e.Data,
+		"-profile", profile, "-update", "-jobs", j)
 }
 
 // openMaybeGzip opens a log that may or may not be compressed.
