@@ -32,11 +32,12 @@ import (
 // Stats is one target's run.
 type Stats struct {
 	Target      string
-	Inited      int // executions when corpus replay finished
-	Done        int // executions when the run finished
-	Execs       int // executions: "Done N runs" summed, else the stat:: sum
-	NewUnits    int // stat::new_units_added
-	SlowestUnit int // stat::slowest_unit_time_sec
+	Inited      int  // executions when corpus replay finished
+	Done        int  // executions when the run finished
+	Execs       int  // executions: "Done N runs" summed, else the stat:: sum
+	Partial     bool // Execs came from a progress line: a cut slice, a lower bound
+	NewUnits    int  // stat::new_units_added
+	SlowestUnit int  // stat::slowest_unit_time_sec
 	PeakRSS     int
 	Cov         int     // last `cov:` seen
 	Ft          int     // last `ft:` seen
@@ -68,6 +69,10 @@ type Stats struct {
 	// the block repeats -- so 16 jobs produce 32 blocks and the naive sum is
 	// exactly 2x. It is the fallback, never the first choice.
 	statExecs int
+
+	// progressExecs is the highest #N libFuzzer printed on a progress line.
+	// A LOWER BOUND FROM AN INTERRUPTED SLICE, never a total -- see Execs.
+	progressExecs int
 }
 
 // UBSite is one UndefinedBehaviorSanitizer report.
@@ -125,6 +130,17 @@ func Parse(r io.Reader) Stats {
 		if strings.Contains(line, "a leak has been found in the initial corpus") ||
 			strings.Contains(line, "no interesting inputs were found") {
 			s.Aborted = true
+		}
+		// NOT the INITED line. "#1000 INITED" is where the corpus REPLAY
+		// finished; the target has not entered the mutation loop yet, and
+		// counting it as executions collapses "inited but never fuzzed" into
+		// "fuzzed" -- one of the three startup states this package exists to
+		// keep apart. Every later verb (NEW, REDUCE, pulse, DONE) is real
+		// fuzzing.
+		if m := reProgress.FindStringSubmatch(line); m != nil && m[2] != "INITED" {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > s.progressExecs {
+				s.progressExecs = n
+			}
 		}
 		if m := reInited.FindStringSubmatch(line); m != nil && s.Inited == 0 {
 			s.Inited, _ = strconv.Atoi(m[1])
@@ -230,6 +246,25 @@ func Parse(r io.Reader) Stats {
 		s.Execs = s.Runs
 	} else {
 		s.Execs = s.statExecs
+	}
+
+	// AND THE PROGRESS COUNTER WHEN THERE IS NEITHER.
+	//
+	// Both of the above are printed when a run ENDS. A slice cut mid-run --
+	// which `-on-deadline cut` does by design at the end of a campaign's
+	// clock -- prints neither, and the log then reported zero executions for
+	// a target that had done hundreds of thousands. The starvation gate read
+	// that zero and failed the round with "started but never fuzzed" about a
+	// slice whose own log ends "#613474 REDUCE ... exec/s: 20449". A real CI
+	// item went red on it, and the message sent the reader looking for a
+	// broken harness that was working perfectly.
+	//
+	// Marked Partial, because a lower bound is not a total and must not be
+	// treated as one: it is enough to say the target fuzzed, and not enough
+	// to raise a ratchet floor against.
+	if s.Execs == 0 && s.progressExecs > 0 {
+		s.Execs = s.progressExecs
+		s.Partial = true
 	}
 
 	// "Done N runs in M second" is PREFERRED for the rate too: it is the

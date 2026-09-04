@@ -100,9 +100,15 @@ func RenderMarkdown(w io.Writer, d Data) error {
 			p("> it; a finding is what a person writes after triage. A UBSan run\n")
 			p("> reports sites here and zero artifacts above, because UBSan does not\n")
 			p("> abort and so nothing is ever saved to disk.\n\n")
-			p("| signature | hits | targets |\n|---|---:|---|\n")
+			p("> A `session` row is PostgreSQL ending a connection on a malformed\n")
+			p("> message — the correct response, and what a protocol fuzzer provokes\n")
+			p("> all day. It is listed because hiding it would be its own lie, and\n")
+			p("> sorted last because it is not a defect. A `server` row is a PANIC or\n")
+			p("> a failed assertion, which is.\n\n")
+			p("| kind | signature | hits | targets |\n|---|---|---:|---|\n")
 			for _, sg := range d.Signatures {
-				p("| %s | %d | %s |\n", sg.Signature, sg.Hits, strings.Join(sg.Targets, ", "))
+				p("| %s | %s | %d | %s |\n",
+					sg.Kind, sg.Signature, sg.Hits, strings.Join(sg.Targets, ", "))
 			}
 			p("\n")
 		}

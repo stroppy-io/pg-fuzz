@@ -22,6 +22,7 @@ import (
 	"io"
 	"pgfuzz/internal/census"
 	"sort"
+	"strings"
 	"time"
 
 	"pgfuzz/internal/campaign"
@@ -136,6 +137,49 @@ type SignatureRow struct {
 	Signature string
 	Hits      int
 	Targets   []string
+	Kind      string // what class of thing it is; see kindOf
+}
+
+// kindOf says what a signature IS, because they are not all the same claim and
+// listing them together made the loudest one look like the most important.
+//
+// A FATAL is PostgreSQL ending a SESSION, which is the correct response to a
+// malformed message and exactly what a protocol fuzzer provokes all day. A
+// PANIC ends the SERVER, which is a real signal. Sorted together by hit count,
+// "terminating connection because protocol synchronization was lost" was the
+// top row of a sweep item -- above every sanitizer finding in it.
+//
+// Nothing is dropped. A reader can still see the FATALs, and their absence
+// would be its own kind of lie; they are simply not allowed to masquerade as
+// defects.
+func kindOf(sig string) string {
+	switch {
+	case strings.HasPrefix(sig, "UBSAN "), strings.HasPrefix(sig, "ASAN "),
+		strings.HasPrefix(sig, "LEAK in "):
+		return "sanitizer"
+	case strings.HasPrefix(sig, "Assert("), strings.HasPrefix(sig, "PANIC "):
+		return "server"
+	case strings.HasPrefix(sig, "libFuzzer "):
+		return "fuzzer"
+	case strings.HasPrefix(sig, "FATAL "):
+		return "session"
+	}
+	return "other"
+}
+
+// kindRank orders the classes by how much they demand attention.
+func kindRank(k string) int {
+	switch k {
+	case "sanitizer":
+		return 0
+	case "server":
+		return 1
+	case "fuzzer":
+		return 2
+	case "other":
+		return 3
+	}
+	return 4 // session: expected, and last
 }
 
 // WithSignatures attaches the census of THIS run, the way WithManifest
@@ -146,13 +190,20 @@ func (d *Data) WithSignatures(rows []census.Row) {
 	for _, r := range rows {
 		d.Signatures = append(d.Signatures, SignatureRow{
 			Signature: r.Signature, Hits: r.Hits, Targets: r.Targets,
+			Kind: kindOf(r.Signature),
 		})
 	}
+	// By CLASS first, then by hits. Hits alone put a session termination above
+	// every sanitizer finding, which is the wrong reading of a louder number.
 	sort.Slice(d.Signatures, func(i, j int) bool {
-		if d.Signatures[i].Hits != d.Signatures[j].Hits {
-			return d.Signatures[i].Hits > d.Signatures[j].Hits
+		a, b := d.Signatures[i], d.Signatures[j]
+		if ra, rb := kindRank(a.Kind), kindRank(b.Kind); ra != rb {
+			return ra < rb
 		}
-		return d.Signatures[i].Signature < d.Signatures[j].Signature
+		if a.Hits != b.Hits {
+			return a.Hits > b.Hits
+		}
+		return a.Signature < b.Signature
 	})
 }
 

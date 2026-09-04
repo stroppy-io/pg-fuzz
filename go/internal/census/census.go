@@ -138,7 +138,19 @@ func Extract(text string) []struct{ Sig, Src string } {
 	// came from LeakSanitizer or UBSan. ExtractLeak applies it once the
 	// reader has established which report is open.
 	for _, m := range rePanic.FindAllStringSubmatch(text, -1) {
-		add(m[1]+" "+strings.TrimSpace(m[2]), "")
+		// DIGITS COLLAPSE HERE TOO, for the reason they collapse for UBSan
+		// operands: they are the input, not the site. protocol_fuzzer feeds
+		// random bytes and PostgreSQL names each one back --
+		//
+		//	FATAL: invalid frontend message type 0
+		//	FATAL: invalid frontend message type 26
+		//	FATAL: invalid frontend message type 255
+		//
+		// -- which turned ONE site into 26 of the 43 rows in a real sweep
+		// item, burying every sanitizer finding under a list of byte values.
+		// The UBSan rule has done this since it was written and this one was
+		// simply missed.
+		add(m[1]+" "+reDigits.ReplaceAllString(strings.TrimSpace(m[2]), "N"), "")
 	}
 	return out
 }
