@@ -268,12 +268,21 @@ func cell(r Row, target string, w int) (string, string) {
 	}
 	c, ok := r.Cells[target]
 	switch {
-	case ok && c.Artifacts > 0:
-		n := fmt.Sprint(c.Artifacts)
-		if c.Artifacts >= 100 {
+	case ok && c.ArtifactsAll > 0:
+		// THE TOTAL, coloured by whether this round added to it. Showing only
+		// this round's count meant a clean round 2 erased round 1's
+		// reproducers from the grid while the header still counted them.
+		n := fmt.Sprint(c.ArtifactsAll)
+		if c.ArtifactsAll >= 100 {
 			n = "++"
 		}
-		return rjust(n, w), term.Red
+		// RED means this round added one; plain means the total is carried
+		// over from earlier rounds. The Python's legend said exactly this:
+		// "RED = this campaign, plain = earlier".
+		if c.Artifacts > 0 {
+			return rjust(n, w), term.Red
+		}
+		return rjust(n, w), term.Dim
 	case ok && c.Swept:
 		return center("·", w), term.Green
 	}
@@ -431,7 +440,14 @@ func drawDetail(s *term.Screen, m Model, sel int) {
 // below the grid, so they get spelled out where there is room.
 func drawPanels(s *term.Screen, m Model, y int) int {
 	if len(m.Growth) > 0 {
-		s.Line(y, term.Dim+"growth (per round; scaled to the window shown, not to zero):"+term.Reset)
+		// SAY WHICH RECORD THIS IS. The corpus and +new columns above come
+		// from THIS campaign's series; these curves come from the ratchet
+		// series, which spans every campaign the workspace has ever run. Two
+		// files describing the same quantity, four columns apart, and nothing
+		// said they had different scopes -- so a curve that disagreed with the
+		// column read as a bug in one of them.
+		s.Line(y, term.Dim+"growth across all campaigns (ratchet series; "+
+			"scaled to the window shown, not to zero) -- the corpus column above is this run:"+term.Reset)
 		y++
 		for _, l := range m.Growth {
 			if y >= s.Rows-2 {
@@ -456,7 +472,8 @@ func drawPanels(s *term.Screen, m Model, y int) int {
 	}
 	if y < s.Rows-2 {
 		s.Line(y, term.Dim+"cells:  ·· not built   × build failed   (blank) idle   "+
-			"◐ building   ● fuzzing   · swept   ~ earlier build   N reproducers"+term.Reset)
+			"◐ building   ● fuzzing   · swept   ~ earlier build   "+
+			"N reproducers (red = this round)"+term.Reset)
 		y++
 	}
 	if m.Status != "" {

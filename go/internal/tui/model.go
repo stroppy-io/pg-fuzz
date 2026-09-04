@@ -34,12 +34,17 @@ type Cell struct {
 	Swept bool
 	// Corpus after the newest slice for this target. Per target, because each
 	// has its own corpus directory and a workspace total is their sum.
-	Corpus    int
-	Running   bool
-	Execs     int
-	NewUnits  int
-	Artifacts int
-	Round     int
+	Corpus   int
+	Running  bool
+	Execs    int
+	NewUnits int
+	// Artifacts is what THIS round produced; ArtifactsAll is the target's
+	// total across the campaign. Both are needed: the cell shows the total, so
+	// a clean round cannot hide earlier reproducers, and colours it by whether
+	// this round added any.
+	Artifacts    int
+	ArtifactsAll int
+	Round        int
 }
 
 // Row is one workspace.
@@ -281,12 +286,21 @@ func Load(campaignsRoot, slug string) Model {
 		// the same targets, so a cumulative grid goes solid after round one
 		// and then shows nothing about what is happening now.
 		if r.Round > c.Round {
-			c = Cell{Round: r.Round, Corpus: c.Corpus}
+			// TOTAL SURVIVES THE ROUND BOUNDARY, this round's does not.
+			//
+			// Only the per-round figure was kept, so from round 2 the grid
+			// could be entirely clean while the header read "reproducers 12"
+			// and the row's repro column read 12 -- with no cell saying where.
+			// The Python showed the target's TOTAL in the cell and coloured it
+			// red only when something arrived this round; that is the
+			// distinction the colour carries, and the number should not.
+			c = Cell{Round: r.Round, Corpus: c.Corpus, ArtifactsAll: c.ArtifactsAll}
 		}
 		c.Swept = true
 		c.Execs += r.Execs
 		c.NewUnits += r.NewUnits
 		c.Artifacts += r.Artifacts
+		c.ArtifactsAll += r.Artifacts
 		// Newest wins, not a sum: Corpus is a level, not an increment, and
 		// adding them would report a corpus several times its real size.
 		if r.Corpus > 0 {
