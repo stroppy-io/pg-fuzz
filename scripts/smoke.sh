@@ -82,7 +82,19 @@ CAMP=$(pgfuzz ws 2>/dev/null >/dev/null; echo "${PGFUZZ_WS:-$HOME/pgfuzz}/campai
 # Not zero, though: a target that executed NOTHING must still fail, because
 # that is the failure this gate exists for. 100 is below anything that ran and
 # above anything that did not.
-step "gates" pgfuzz gate -w "$WS" -logs "$CAMP" -since 24h -floor 100
+# EXIT 3 IS NOT A FAILURE HERE, and the distinction is the whole point.
+#
+# `gate` returns 1 when the HARNESS is broken -- a target that executed almost
+# nothing, a round that did not sweep every built target, slices with no final
+# stats -- and 3 when every one of those passed and the fuzzer FOUND something.
+# This script exists to prove the pipeline works, so 1 must fail it and 3 must
+# not: a sweep that turns red because PostgreSQL has undefined behaviour is a
+# board nobody reads, and the starvation it was built to catch then arrives
+# unseen.
+#
+# Nothing is muted. The gate still prints every verdict, still records them to
+# gate-failures.jsonl, and the report still ships them.
+step "gates" bash -c 'pgfuzz gate -w "$0" -logs "$1" -since 24h -floor 100 || [ $? -eq 3 ]' "$WS" "$CAMP"
 
 # THE DOCUMENTS. A report or a bundle that cannot be produced is discovered at
 # the end of a campaign, which is the worst possible time to find out.

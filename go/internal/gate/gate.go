@@ -30,6 +30,39 @@ type Verdict struct {
 	Name   string
 	Failed bool
 	Detail []string
+	// About says whether a failure means the HARNESS is broken or means the
+	// fuzzer FOUND something. They are not the same event and must not share
+	// an exit code.
+	//
+	// A target that executed 192 inputs, a slice that never printed its final
+	// stats, a round that did not sweep every built target -- those say the
+	// machinery is not working, and somebody has to stop and fix it. A UB site
+	// firing outside its accepted scope says PostgreSQL did something
+	// interesting, which is the entire point of running this and no reason at
+	// all to call the run broken.
+	//
+	// Collapsing the two is how a board goes permanently red and stops being
+	// read: every real finding looks like a build failure. The verdicts are
+	// still printed and still recorded either way -- what changes is only
+	// whether the caller is being told to fix something.
+	About Subject
+}
+
+// Subject is what a failed verdict is about.
+type Subject int
+
+const (
+	// Harness: the machinery did not do its job.
+	Harness Subject = iota
+	// Finding: the machinery worked and the fuzzer found something.
+	Finding
+)
+
+func (s Subject) String() string {
+	if s == Finding {
+		return "finding"
+	}
+	return "harness"
 }
 
 func (v Verdict) String() string {
@@ -196,7 +229,7 @@ type Accepted struct {
 // and a key that moves with a point upgrade fails open on every branch at
 // once.
 func UBSan(s logs.Stats, ws string, accepted []Accepted) Verdict {
-	v := Verdict{Name: "ubsan"}
+	v := Verdict{Name: "ubsan", About: Finding}
 	seen := map[string]bool{}
 	for _, u := range s.UB {
 		if u.Function == "" {

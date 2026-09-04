@@ -1238,7 +1238,22 @@ func cmdGate(argv []string) int {
 	swept := map[string]bool{}
 	// Every parsed slice of this round, for the fleet-level verdict.
 	var round []logs.Stats
-	failed := 0
+	// COUNTED APART, because they mean different things. A starved target or a
+	// round that did not sweep says the harness is broken and somebody must
+	// stop; a UB site says the fuzzer did its job. Both are printed, both are
+	// recorded -- only the exit code distinguishes them, so a caller can act
+	// on "fix this" without being told to act on "we found something".
+	failed, findings := 0, 0
+	var failedNames []string
+	note := func(v gate.Verdict) {
+		if v.About == gate.Finding {
+			findings++
+		} else {
+			failed++
+		}
+		failedNames = append(failedNames, v.Name)
+		fmt.Println(v)
+	}
 	for _, lg := range runLogs {
 		st, err := logs.ParseFile(lg)
 		if err != nil {
@@ -1253,8 +1268,7 @@ func cmdGate(argv []string) int {
 			gate.UBSan(st, c.Name, accepted),
 		} {
 			if v.Failed {
-				failed++
-				fmt.Println(v)
+				note(v)
 			}
 		}
 	}
@@ -1296,20 +1310,30 @@ func cmdGate(argv []string) int {
 	// reported anything, because a floor cannot be verified against a slice
 	// that never said what it did.
 	if v := gate.FinalStats(round, *minStats); v.Failed {
-		failed++
-		fmt.Println(v)
+		note(v)
 	}
 	if v := gate.RoundComplete(sweptList, built); v.Failed {
-		failed++
-		fmt.Println(v)
+		note(v)
 	}
 
-	if failed == 0 {
+	if failed == 0 && findings == 0 {
 		fmt.Printf("all gates passed  %s  (%d logs, %d targets built)\n",
 			c.Name, len(runLogs), len(built))
 		return 0
 	}
-	fmt.Printf("\n%d gate failure(s)  %s\n", failed, c.Name)
+	// EXIT 3 MEANS "THE FUZZER FOUND SOMETHING", not "the run is broken".
+	//
+	// A sweep whose only failure is a UB site has a working harness and an
+	// interesting result. Returning 1 for that is how a board goes red every
+	// round and stops being read -- and then a real starvation, the thing this
+	// gate exists to catch, arrives on a board nobody looks at any more.
+	if failed == 0 {
+		fmt.Printf("\n%d finding(s), harness ok  %s  [%s]\n",
+			findings, c.Name, strings.Join(failedNames, " "))
+		return 3
+	}
+	fmt.Printf("\n%d harness failure(s), %d finding(s)  %s  [%s]\n",
+		failed, findings, c.Name, strings.Join(failedNames, " "))
 	return 1
 }
 
@@ -5899,10 +5923,21 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeab
 	// -logs is where THIS campaign wrote, which for a sealed run is not the
 	// workspace. Without it the gates judged, and the ratchet raised floors
 	// from, logs belonging to some earlier run.
-	if code := run("gate", "gate", "-w", e.Dir, "-logs", e.Data,
-		"-since", roundWindow.String()); code == 1 {
+	//
+	// 1 AND 3 ARE DIFFERENT EVENTS. 1 says the harness is broken -- a starved
+	// target, a round that did not sweep, slices with no final stats. 3 says
+	// every one of those was fine and a UB site fired, which is the fuzzer
+	// working. Recording both under one word made a finding indistinguishable
+	// from a build failure, and the old detail string was a guess: it listed
+	// all five gates because the caller could not tell which had spoken.
+	switch code := run("gate", "gate", "-w", e.Dir, "-logs", e.Data,
+		"-since", roundWindow.String()); code {
+	case 1:
 		fmt.Fprintf(os.Stderr, "  !! %s FAILED A GATE in round %d\n", e.Name, round)
-		note("gate", "starvation, slow-units, ubsan, round-complete or final-stats")
+		note("harness", "a gate reported the harness is not working; see the round's gate output")
+	case 3:
+		fmt.Fprintf(os.Stderr, "  %s: findings in round %d, harness ok\n", e.Name, round)
+		note("finding", "the fuzzer found something; the harness passed every gate")
 	}
 	// THE PROFILE, so an experiment cannot raise the production floors.
 	//

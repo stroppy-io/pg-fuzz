@@ -103,7 +103,7 @@ func AbsentStreak(path, ws, token string) int {
 // accepted is every token the accept-list holds for this workspace; seen is
 // what this round actually observed.
 func UBSanWithdrawals(seriesPath, ws string, accepted, seen []string) Verdict {
-	v := Verdict{Name: "ubsan-withdrawal"}
+	v := Verdict{Name: "ubsan-withdrawal", About: Finding}
 	if len(accepted) == 0 {
 		return v
 	}

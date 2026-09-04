@@ -75,7 +75,7 @@
 #name	version	repo	ref	apt	preload	create	notes
 pgaudit	17.1	https://github.com/pgaudit/pgaudit.git	17.1	-	yes	pgaudit	logs statements; preload required
 pgauditlogtofile	1.7.6	https://github.com/fmbiete/pgauditlogtofile.git	v1.7.6	-	yes	pgauditlogtofile	companion to pgaudit; preload required
-pg_background	1.5	https://github.com/vibhorkum/pg_background.git	v1.5	-	no	pg_background	runs SQL in a background worker. Owner is vibhorkum, not vibhorkumar
+pg_background	2.0.3	https://github.com/vibhorkum/pg_background.git	v2.0.3	-	no	pg_background	runs SQL in a background worker. Owner is vibhorkum, not vibhorkumar
 pg_repack	1.5.3	https://github.com/reorg/pg_repack.git	ver_1.5.3	liblz4-dev libzstd-dev	no	pg_repack	builds a client binary too
 timescaledb	2.23.1	https://github.com/timescale/timescaledb.git	2.23.1	cmake libssl-dev	yes	timescaledb	cmake build; preload required
 citus	13.2.0	https://github.com/citusdata/citus.git	v13.2.0	libcurl4-openssl-dev liblz4-dev libzstd-dev libicu-dev	yes	citus	heavy; preload required

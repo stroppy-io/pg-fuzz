@@ -19,6 +19,13 @@
 #
 # scope is a comma-separated list of workspace-name globs. "*" means everywhere.
 #
+# THE GLOBS MUST KNOW EVERY NAMING SCHEME IN USE. The CI sweep names its
+# workspaces ci-rel_16_stable-undefined, which matched none of the patterns
+# below -- so an ACCEPTED site read as firing out of scope, and every undefined
+# item failed its round on a row that was supposed to excuse it. The gate was
+# right and the list was stale; a scope that silently matches nothing is the
+# same shape of bug as a glob that silently matches everything.
+#
 # function	scope	site	class	reference	added
 pg_strtoint32_safe	*	numutils.c negation of INT32_MIN, int4in	signed-overflow	FINDINGS/README.md	2026-08-18
 pg_strtoint64_safe	*	numutils.c negation of INT64_MIN	signed-overflow	FINDINGS/README.md	2026-08-18
@@ -27,4 +34,4 @@ inet_net_pton_ipv4	*	inet_net_pton.c octet accumulation, non-CIDR path	signed-ov
 do_to_timestamp	*	formatting.c to_date / to_timestamp field arithmetic	signed-overflow	FINDINGS/README.md	2026-08-18
 # Rewritten with pg_mul_s64_overflow/pg_add_s64_overflow upstream; the 18+ and
 # master trees should NOT produce it. If they do, that is a finding.
-tm2timestamp	pg16*,pg17*,oriole16*,oriole17*,oriolebare16*,oriolebare17*	timestamp.c date * USECS_PER_DAY	signed-overflow	FINDINGS/README.md	2026-08-18
+tm2timestamp	pg16*,pg17*,ci-rel_16*,ci-rel_17*,oriole16*,oriole17*,oriolebare16*,oriolebare17*	timestamp.c date * USECS_PER_DAY	signed-overflow	FINDINGS/README.md	2026-08-18

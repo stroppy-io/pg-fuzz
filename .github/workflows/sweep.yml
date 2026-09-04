@@ -164,7 +164,26 @@ jobs:
           # what is built; what it proves is that the series ran at all.
           conf="$PGFUZZ_WS/$WS/workspace.conf"
           echo "patch=$GITHUB_WORKSPACE/project/patches/0001-ci-marker.patch" >> "$conf"
-          echo "plugins=pgaudit pg_background pgsql-http" >> "$conf"
+
+          # PGAUDIT IS VERSIONED BY POSTGRESQL MAJOR, so one pin cannot serve
+          # five refs: 17.1 does not compile against 18, and 18.0 does not
+          # compile against 17. Pinning it here rather than in plugins.tsv is
+          # what that file asks for -- the registry ref is a default, and which
+          # version a run uses is the workspace's decision.
+          #
+          # pg_background needed no per-major pin, only a newer one: v1.5 fails
+          # on 18+ with 'StatementTimeout' and 'MyProc' undeclared, and v2.0.3
+          # supports 14 through 19. That bump is in plugins.tsv, where it
+          # benefits every workspace rather than only this one.
+          case "${{ matrix.ref }}" in
+              REL_16_STABLE) audit=16.1     ;;
+              REL_17_STABLE) audit=17.1     ;;
+              REL_18_STABLE) audit=18.0     ;;
+              REL_19_STABLE) audit=19beta3  ;;
+              master)        audit=main     ;;
+              *) echo "no pgaudit version is mapped for ${{ matrix.ref }}" >&2; exit 1 ;;
+          esac
+          echo "plugins=pgaudit@$audit pg_background pgsql-http" >> "$conf"
           cat "$conf"
 
       # NO SEPARATE BUILD STEP.
