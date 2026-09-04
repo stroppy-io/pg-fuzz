@@ -106,6 +106,26 @@ never been run is itself an unproven script.
       "produced nothing at all", not "the manifest is missing". Per-file
       assertions stay in `smoke.sh`.
 
+## Found by the sweep, not a CI problem
+
+- [ ] **An empty `crash-` artifact is a leak report, not a crash.** The first
+      green sweep saved `crash-da39a3ee5e6b4b0d3255bfef95601890afd80709` for
+      two targets — `da39a3ee…` being the sha1 of the empty input. Nothing
+      crashed: LeakSanitizer runs its check at process EXIT and writes a
+      zero-byte "Test unit" for a leak that belongs to no input.
+
+      `-detect_leaks=0` is already passed and does not prevent this: it is a
+      libFuzzer flag governing libFuzzer's own leak checks during fuzzing,
+      while LSan's at-exit check is an ASan runtime option (`ASAN_OPTIONS`).
+
+      It matters because an empty `crash-` file is indistinguishable from a
+      real reproducer to everything downstream — the artifact count, the
+      upload, and whoever triages it. The report already says "an artifact is
+      not a finding"; this is a case where the artifact is not even an
+      artifact. Decide whether to set `ASAN_OPTIONS=detect_leaks=0` for these
+      slices or to name leak-at-exit artifacts differently, but they should
+      not be called `crash-`.
+
 ## Left to build
 
 - [x] **`sweep.yml` calls `scripts/smoke.sh`**, as `ci.yml` calls `ci.sh`.

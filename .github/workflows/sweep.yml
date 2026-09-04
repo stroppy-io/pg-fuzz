@@ -239,7 +239,16 @@ jobs:
             ${{ env.PGFUZZ_WS }}/campaigns/ci/gate-failures.jsonl
 
       # The evidence a failure is read from: the per-target run logs the gates
-      # parse, the build log, and the documents. `error` on purpose -- but be
+      # parse, the build log, and the documents.
+      #
+      # `run-*.log*`, NOT `run-*.log`. The runner gzips the larger logs, so the
+      # narrower glob quietly dropped 5 of 23 targets from the first record it
+      # produced -- including both targets that had saved a crash artifact --
+      # and the upload was green either way. The samples and the per-slice cpu
+      # files come too: they are how a slice proves it did work, and a target
+      # that ran and a target that did nothing are otherwise the same silence.
+      #
+      # `error` on purpose -- but be
       # precise about what it buys: upload-artifact fails only when NO path
       # matches, so this catches "the run produced nothing" and not "the
       # manifest is missing while the logs are there". The per-file assertions
@@ -253,7 +262,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/run-*.log
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/run-*.log*
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/run-*.cpu
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/*.samples.jsonl
             ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/build.log
             ${{ env.PGFUZZ_WS }}/campaigns/ci/series.jsonl
             ${{ env.PGFUZZ_WS }}/campaigns/ci/MANIFEST.json
