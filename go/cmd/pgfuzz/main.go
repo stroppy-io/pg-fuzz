@@ -85,7 +85,8 @@ const usage = `pgfuzz -- reproduce a recorded finding
                   [-profile NAME]   an isolated baseline, series and history
   pgfuzz bootstrap [-cache DIR]
   pgfuzz pin    [-check] [-update -reason "..."] [-pg <ref> [-reason "..."]]
-  pgfuzz corpus -w <ws> [-repair] [-seed-from <ws>] [-minimize [-cap N]]
+  pgfuzz corpus -w <ws> [-repair] [-seed-from <ws> [-with-archived]]
+                        [-minimize [-cap N]]
                         [-autocap [-apply] [-tune-budget]]
                         [-seed-from-source <pg-src> [-extra-globs G]]
   pgfuzz ws     [-new NAME -ref R [-flavor F] [-sanitizer S] [-plugins "..."]]
@@ -2526,6 +2527,9 @@ func cmdCorpus(argv []string) int {
 	fs := flag.NewFlagSet("corpus", flag.ExitOnError)
 	ws := fs.String("w", "", "workspace")
 	repair := fs.Bool("repair", false, "make unreadable entries readable again")
+	withArchived := fs.Bool("with-archived", false,
+		"also seed inputs a minimise or autocap moved aside\n"+
+			"    	(for a coverage workspace: replay cost bounds fuzzing, not coverage)")
 	seedFrom := fs.String("seed-from", "", "copy inputs from this workspace")
 	seedFromSrc := fs.String("seed-from-source", "", "generate seeds from a PostgreSQL source tree")
 	extraGlobs := fs.String("extra-globs", "", "also take statements from these globs under the source tree")
@@ -2581,6 +2585,25 @@ func cmdCorpus(argv []string) int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
+		}
+		if *withArchived {
+			// The inputs a minimise or an autocap moved aside. They reached
+			// real code once, so they count for COVERAGE -- the measurement
+			// that was missing roughly 641,000 of them across two workspaces.
+			targets, _ := build.Targets(buildDir(dir, c, r))
+			a, err := corpus.SeedArchived(srcDir, root, targets)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "pgfuzz: seeding archived inputs: %v\n", err)
+				return 2
+			}
+			res.Copied += a.Copied
+			res.Present += a.Present
+			res.Failed += a.Failed
+			if res.FirstErr == nil {
+				res.FirstErr = a.FirstErr
+			}
+			fmt.Printf("  including %s archived input(s) a minimise or cap set aside\n",
+				comma(a.Copied))
 		}
 		fmt.Printf("seeded %s from %s: +%s inputs, %s already present\n",
 			c.Name, *seedFrom, comma(res.Copied), comma(res.Present))
