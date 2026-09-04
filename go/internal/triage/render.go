@@ -207,8 +207,21 @@ func Render(findings []Finding, lifts []Lead, censuses []Census,
 			}
 			b.w("")
 			var bits []string
+			// SEVERITY, BUILD AND FOUND: parsed since this package was
+			// written, rendered by nothing. Severity vanishing from a
+			// document aimed at maintainers is the notable one -- it is the
+			// first thing a reader triages by, and the write-ups state it.
+			if f.Severity != "" {
+				bits = append(bits, "severity "+wsCollapse.ReplaceAllString(f.Severity, " "))
+			}
 			if f.Affects != "" {
 				bits = append(bits, "affects "+f.Affects)
+			}
+			if f.Build != "" {
+				bits = append(bits, "built "+wsCollapse.ReplaceAllString(f.Build, " "))
+			}
+			if f.Found != "" {
+				bits = append(bits, "found "+wsCollapse.ReplaceAllString(f.Found, " "))
 			}
 			if f.Status != "" {
 				bits = append(bits, wsCollapse.ReplaceAllString(f.Status, " "))

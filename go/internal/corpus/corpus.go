@@ -154,6 +154,23 @@ func SeedInto(srcRoot, dstRoot string) (SeedResult, error) {
 		}
 		for _, e := range ents {
 			if e.IsDir() {
+				// SUBDIRECTORIES ARE STILL INPUTS. The shell copied with
+				// `cp -rn "$src/corpus/."`, which recurses. Nothing writes
+				// nested corpus entries today, so this is latent rather than
+				// live -- but a seed that silently drops part of a corpus is
+				// the failure this whole file is about, and the depth of a
+				// directory is not a reason to skip it.
+				sub, subErr := SeedInto(filepath.Join(src, e.Name()),
+					filepath.Join(dst, e.Name()))
+				res.Copied += sub.Copied
+				res.Present += sub.Present
+				res.Failed += sub.Failed
+				if res.FirstErr == nil {
+					res.FirstErr = sub.FirstErr
+				}
+				if subErr != nil && res.FirstErr == nil {
+					res.FirstErr = subErr
+				}
 				continue
 			}
 			// libFuzzer names corpus files after the SHA-1 of their content,

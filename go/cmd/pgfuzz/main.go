@@ -1076,7 +1076,17 @@ func cmdGate(argv []string) int {
 	ws := fs.String("w", "", "workspace")
 	floor := fs.Int("floor", 10000, "executions below this is starvation")
 	baseline := fs.String("baseline", "", "ubsan accept-list (default: the repo's)")
-	since := fs.Duration("since", 0, "only judge logs written within this window")
+	// SAME-DAY BY DEFAULT, as the shell was.
+	//
+	// With no --since, check-round-complete took midnight of the newest log's
+	// own day and printed "previous campaign, not judged" for anything older.
+	// This defaulted to no window at all and announced that it was judging
+	// every target's newest log of any age -- so a human running `pgfuzz gate
+	// -w ws` got a verdict the shell would have declined to give, mixing a
+	// dead log from weeks ago into today's round. 0 still means no window,
+	// for a caller that wants the whole history deliberately.
+	since := fs.Duration("since", 24*time.Hour,
+		"only judge logs written within this window (0 for every log, of any age)")
 	minStats := fs.Int("min-stats", 90, "percent of slices that must report final stats")
 	// WHERE THE LOGS ARE, which is not always the workspace.
 	//
@@ -1155,7 +1165,17 @@ func cmdGate(argv []string) int {
 	if len(runLogs) == 0 {
 		// NOT a pass. A gate with nothing to read has checked nothing, and
 		// that is not the same as finding nothing wrong.
-		fmt.Fprintf(os.Stderr, "pgfuzz: no run logs under %s -- nothing was checked\n", dir)
+		// NAMES WHERE IT LOOKED, which is not always the workspace: -logs
+		// points at a sealed campaign's own directory, and saying "no logs
+		// under <workspace>" when that is not where it looked sends the
+		// reader to the wrong place.
+		why := ""
+		if *since > 0 && len(all) > 0 {
+			why = fmt.Sprintf(" (%d exist but are older than %s -- pass -since 0 to judge them)",
+				len(all), *since)
+		}
+		fmt.Fprintf(os.Stderr, "pgfuzz: no run logs under %s%s -- nothing was checked\n",
+			logRoot, why)
 		return 2
 	}
 

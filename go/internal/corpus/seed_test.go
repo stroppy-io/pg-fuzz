@@ -63,3 +63,35 @@ func TestSeedTotalsStillAddUp(t *testing.T) {
 		t.Errorf("Seed = %d, %d, %v", copied, skipped, err)
 	}
 }
+
+// SUBDIRECTORIES ARE STILL INPUTS.
+//
+// The shell copied with `cp -rn "$src/corpus/."`, which recurses. Seed skipped
+// any directory inside a target directory. Nothing writes nested corpus
+// entries today, so this was latent -- but a seed that silently drops part of
+// a corpus is the failure this file is about, and depth is not a reason to
+// skip.
+func TestSeedIsRecursive(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	deep := filepath.Join(src, "a_fuzzer", "nested")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "x"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "a_fuzzer", "y"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SeedInto(src, dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Copied != 2 {
+		t.Errorf("copied %d, want both the top-level and the nested input", res.Copied)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "a_fuzzer", "nested", "x")); err != nil {
+		t.Error("the nested input was dropped")
+	}
+}
