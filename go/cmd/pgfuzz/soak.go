@@ -15,6 +15,7 @@ import (
 	"pgfuzz/internal/build"
 	"pgfuzz/internal/campaign"
 	"pgfuzz/internal/fuzz"
+	"pgfuzz/internal/logs"
 	"pgfuzz/internal/wslock"
 )
 
@@ -71,6 +72,12 @@ func cmdSoak(argv []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The preflight tier, as every other fuzzing path has.
+	if err := wslock.NeedDisk(dir, fuzz.DefaultPreflightGB, "a soak"); err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 2
+	}
+
 	series := campaign.Series{Path: filepath.Join(dir, "soak-series.jsonl")}
 	runID := campaign.RunID("soak", time.Now())
 	deadline := time.Now().Add(time.Duration(*hours * float64(time.Hour)))
@@ -83,7 +90,19 @@ func cmdSoak(argv []string) int {
 			Workspace: dir, Name: c.Name, OutDir: out,
 			Seconds: *base, Jobs: *jobs, MaxLen: maxLen(c),
 			Sanitizer: c.Sanitizer, Lineage: true,
-			Image: "gcr.io/oss-fuzz/" + c.Project,
+			// THE BASE-RUNNER, like every other mode.
+			//
+			// This said gcr.io/oss-fuzz/<project>, the BUILDER image. The
+			// wrapper a slice execs -- run_fuzzer -- ships only in
+			// base-runner, so every soak slice failed to exec and fuzzed
+			// nothing. Leaving the field empty takes fuzz.Request's default,
+			// which is the one image run, sweep and campaign all use; naming
+			// a second image here is how they came to disagree.
+			//
+			// The disk floor, which a soak needs more than any other mode: it
+			// is the longest-running and most corpus-hungry, and it was the
+			// only path with neither tier armed.
+			StopFreeGB: fuzz.DefaultStopFreeGB,
 		},
 		Targets: targets, Concurrent: *conc,
 		Budgets: budgets, Multiplier: *mult, Deadline: deadline,
@@ -99,12 +118,23 @@ func cmdSoak(argv []string) int {
 				t, r.Elapsed.Round(time.Second), r.CorpusFrom, r.CorpusTo,
 				r.CorpusTo-r.CorpusFrom, r.NewArtifacts())
 			// Recorded as it finishes, so a killed soak keeps what it did.
+			// THE NUMBERS, from the slice's own log.
+			//
+			// The row carried none: no execs, no new units, no coverage, no
+			// liveness. So the mode that does the most fuzzing per slice read
+			// as "execs: 0, alive: false" to every consumer of a series row,
+			// and contributed nothing to any floor.
+			st, _ := logs.ParseFile(r.LogPath)
 			series.Append(campaign.Slice{
 				RunID: runID, Workspace: c.Name, Target: t,
 				Started: time.Now().UTC().Format(time.RFC3339),
 				Seconds: int(r.Elapsed.Seconds()), Jobs: *jobs,
 				Corpus: r.CorpusTo, CorpusBefore: r.CorpusFrom,
 				Artifacts: r.NewArtifacts(), Dict: r.Dict,
+				Execs: st.Execs, NewUnits: st.NewUnits,
+				Cov: st.Cov, Ft: st.Ft,
+				Alive:    st.Startup() == logs.Fuzzed,
+				DiskStop: r.DiskStop, Hung: r.Hung,
 			})
 		},
 	})

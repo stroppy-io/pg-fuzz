@@ -60,51 +60,117 @@ func Soak(ctx context.Context, r SoakRequest) []Result {
 	}
 
 	var (
-		mu   sync.Mutex
-		out  []Result
-		wg   sync.WaitGroup
-		sem  = make(chan struct{}, conc)
-		live int
+		mu  sync.Mutex
+		out []Result
 	)
 
-	for _, t := range r.Targets {
-		if ctx.Err() != nil {
+	schedule(ctx, r.Targets, conc, r.Deadline, func(target string) {
+		mu.Lock()
+		live := len(out) // only for the in-flight display
+		mu.Unlock()
+		if r.OnStart != nil {
+			r.OnStart(target, live)
+		}
+
+		req := r.Request
+		req.Target = target
+		req.Seconds = r.Budgets.For(r.Name, target, r.Request.Seconds) * mult
+
+		res, err := Run(ctx, req)
+		mu.Lock()
+		if err == nil {
+			out = append(out, res)
+		}
+		mu.Unlock()
+		if r.OnDone != nil {
+			r.OnDone(target, res, err)
+		}
+	})
+	return out
+}
+
+// schedule runs a ROLLING POOL over targets until the deadline.
+//
+// Factored out of Soak so the schedule can be tested without containers: the
+// schedule is what was wrong. It was `for _, t := range targets` -- one slice
+// each, then return -- under a doc comment describing the shell's rolling
+// pool. `soak -hours 10` therefore fuzzed for about one.
+//
+// THE DEADLINE IS CHECKED BETWEEN SLICES, NEVER MID-SLICE. A soak slice is
+// long and mostly useful work; cutting one in half throws away the corpus
+// replay it has already paid for. A sweep cuts because its slices are short.
+//
+// Returns how many slices it started.
+func schedule(ctx context.Context, targets []string, conc int,
+	deadline time.Time, run func(target string)) int {
+
+	if len(targets) == 0 {
+		return 0
+	}
+	// A pool wider than the target list is meaningless, and capping is what
+	// lets a free slot imply a free target below.
+	if conc > len(targets) {
+		conc = len(targets)
+	}
+	if conc < 1 {
+		conc = 1
+	}
+
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		sem      = make(chan struct{}, conc)
+		inFlight = map[string]bool{}
+		next     int
+		started  int
+	)
+	past := func() bool { return !deadline.IsZero() && time.Now().After(deadline) }
+
+outer:
+	for {
+		if ctx.Err() != nil || past() {
 			break
 		}
-		// Checked BEFORE starting, never during: see the note above.
-		if !r.Deadline.IsZero() && time.Now().After(r.Deadline) {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break outer
+		}
+		// Re-checked after waiting, which may have taken a whole slice.
+		if past() || ctx.Err() != nil {
+			<-sem
 			break
 		}
-		sem <- struct{}{}
+
+		mu.Lock()
+		picked := ""
+		for k := 0; k < len(targets); k++ {
+			c := targets[(next+k)%len(targets)]
+			if !inFlight[c] {
+				picked, next = c, (next+k+1)%len(targets)
+				inFlight[c] = true
+				break
+			}
+		}
+		if picked != "" {
+			started++
+		}
+		mu.Unlock()
+
+		if picked == "" {
+			<-sem
+			break
+		}
 		wg.Add(1)
 		go func(target string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-
+			run(target)
 			mu.Lock()
-			live++
-			n := live
+			delete(inFlight, target)
 			mu.Unlock()
-			if r.OnStart != nil {
-				r.OnStart(target, n)
-			}
-
-			req := r.Request
-			req.Target = target
-			req.Seconds = r.Budgets.For(r.Name, target, r.Request.Seconds) * mult
-
-			res, err := Run(ctx, req)
-			mu.Lock()
-			live--
-			if err == nil {
-				out = append(out, res)
-			}
-			mu.Unlock()
-			if r.OnDone != nil {
-				r.OnDone(target, res, err)
-			}
-		}(t)
+		}(picked)
 	}
 	wg.Wait()
-	return out
+	return started
 }
