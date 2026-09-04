@@ -139,43 +139,19 @@ jobs:
           pgfuzz inventory -w "$WS" | grep -i 'ci-marker' \
             || { echo "the inventory cannot name the patch"; exit 1; }
 
-      # A CAMPAIGN, because that is the code path a long run uses.
+      # THE WHOLE PIPELINE, through the same script that runs on a laptop.
       #
-      # Sealed, so the corpus is copied and the manifest written; two rounds,
-      # so rotation and the per-round gate hook both run; on-deadline cut, so
-      # the deadline path is exercised rather than assumed. Everything here is
-      # the overnight configuration with the clock turned down.
-      - name: campaign
+      # Inlining these steps here would be the two-statements-of-one-fact
+      # problem that produced the Go version skew: what CI runs has to be what
+      # a person can run before pushing, or the two drift and only one of them
+      # is ever checked.
+      - name: smoke
+        env:
+          PGFUZZ_SMOKE_SLUG: ci
+          PGFUZZ_SMOKE_OUT: ${{ runner.temp }}/out
         run: |
           secs='${{ github.event.inputs.seconds }}'
-          pgfuzz campaign -slug ci -sealed -w "$WS" \
-                          -hours 0.12 -time "${secs:-8}" -jobs 2 \
-                          -on-deadline cut -profile ci
-
-      # THE GATES, over the campaign's own logs. -logs is the flag that was
-      # missing for the whole of this port's life: a sealed campaign writes
-      # under the slug, and pointing the gates at the workspace judged an
-      # earlier run.
-      - name: gates
-        run: |
-          pgfuzz gate -w "$WS" \
-                      -logs "$PGFUZZ_WS/campaigns/ci/ws/$WS" -since 24h
-
-      # THE DOCUMENTS. A report and a bundle that cannot be produced are
-      # discovered at the end of a campaign, which is the worst time.
-      - name: report and bundle
-        run: |
-          pgfuzz report -slug ci -html "$RUNNER_TEMP/report.html" \
-                                 -md "$RUNNER_TEMP/report.md"
-          pgfuzz bundle -slug ci -o "$RUNNER_TEMP/bundle" -no-corpus
-          pgfuzz index -slug ci -o "$RUNNER_TEMP/index.html"
-
-      # THE THINGS THAT READ A FINISHED RUN.
-      - name: triage, census, inventory
-        run: |
-          pgfuzz census -w "$WS" -o "$RUNNER_TEMP/census" -summary
-          pgfuzz inventory -w "$WS" >/dev/null
-          pgfuzz breakdown -w "$WS" >/dev/null
+          scripts/smoke.sh "$WS" "${secs:-8}"
 
       - name: what it produced
         if: always()
@@ -204,5 +180,5 @@ jobs:
             ${{ runner.temp }}/ws/campaigns/ci/series.jsonl
             ${{ runner.temp }}/ws/campaigns/ci/MANIFEST.json
             ${{ runner.temp }}/ws/campaigns/ci/gate-failures.jsonl
-            ${{ runner.temp }}/report.md
-            ${{ runner.temp }}/index.html
+            ${{ runner.temp }}/out/report.md
+            ${{ runner.temp }}/out/index.html

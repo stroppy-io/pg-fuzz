@@ -158,11 +158,83 @@ build actually contained.
 go/          the tool: cmd/pgfuzz plus ~30 internal packages
 project/     what OSS-Fuzz builds -- harnesses, build.sh, patches, plugins.tsv
 tests/       the red/green suite: cases, inputs, preconditions, fixes
-scripts/     data, not code: ratchet baselines and accept-lists
+scripts/     ci.sh and smoke.sh, plus data: ratchet baselines and accept-lists
 ```
 
 `project/build.sh` is the one piece of shell, because it is OSS-Fuzz's contract
 and runs inside the build container.
+
+## Contributing
+
+**Run CI before you push.** It is one script and it is the same script GitHub
+runs:
+
+```
+scripts/ci.sh            # everything: build, vet, gofmt, tests, -race, wiring
+scripts/ci.sh test       # or one job: test | wiring | harness
+```
+
+The workflow's three jobs are one line each calling that script, so *green
+locally* and *green on GitHub* are one claim rather than two that drift apart.
+They already had: the workflow pinned Go 1.24 while `go/go.mod` declared 1.27,
+a toolchain that cannot build the module, and nobody noticed because nobody had
+run it.
+
+For full fidelity — real containers, the actual actions — [act][act] runs the
+workflow as GitHub would:
+
+```
+act                      # every job
+act -j test              # one
+```
+
+### What CI checks, and what it does not
+
+It checks that **the tool** is sound: it builds, it is formatted, the tests
+pass under `-race`, every `internal/` package has a caller, and every command
+in the usage text is dispatched. Those last two are aimed at this project's
+recurring defect — correct, tested code that nobody calls. Nine such packages
+were found in one audit. Unit tests were green throughout, because they
+exercised the libraries rather than the commands that use them.
+
+It does **not** fuzz. A green CI means the tool is sound, not that the fuzzer
+found nothing.
+
+### Before a long run
+
+A campaign is hours to days of machine time. `scripts/smoke.sh` runs the same
+code path first, with the budgets turned down to seconds:
+
+```
+scripts/smoke.sh <workspace> [seconds-per-target]
+```
+
+It builds, seals, rounds, gates, ratchets, reports, bundles and indexes —
+everything an overnight run touches. A bare sweep would exercise about a third
+of that and leave the manifest, the rounds, the gate wiring and the documents
+to be discovered broken at hour nineteen.
+
+### House rules
+
+- **Every change carries a test**, and the test states what breaks without it.
+  A test that only asserts the current behaviour documents nothing.
+- **Absence is never a pass.** A gate with nothing to read has checked nothing,
+  and that is not the same as finding nothing wrong. This rule has been broken
+  in both directions here and cost real campaigns.
+- **A number must say what it measured.** Two figures of different scope
+  printed side by side will be read as one — that is how a run that produced no
+  findings came to publish twenty-five.
+- **Comments say why, not what.** The reason a guard exists is the part that
+  cannot be recovered from the code, and it is what stops the guard being
+  removed as redundant.
+- **No third-party dependencies.** A binary handed to a vendor so they can
+  confirm a defect must not need a module proxy to build. CI fails if `go.mod`
+  grows a `require`.
+
+`AGENTS.md` has the invariants in full, and why each one exists. Read it before
+changing the tool.
+
+[act]: https://nektosact.com
 
 ## Further
 
