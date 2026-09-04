@@ -97,10 +97,27 @@ func Measure(ctx context.Context, r MeasureRequest) (TargetSummary, error) {
 				case <-stopGuard:
 					return
 				case <-t.C:
-					if free, err := freeGB(r.Out); err == nil && free < r.StopFreeGB {
+					// THE FILESYSTEM DOCKER WRITES TO, not the one the build
+					// sits on. The hazard is a container's writable layer
+					// growing to hundreds of gigabytes; the shell measured
+					// `df /` for exactly that, and build.Move states outright
+					// that these roots are expected to be different volumes.
+					// Both are checked, because either filling is fatal.
+					free, err := freeGB(r.Out)
+					rootFree, rootErr := freeGB("/")
+					low := (err == nil && free < r.StopFreeGB) ||
+						(rootErr == nil && rootFree < r.StopFreeGB)
+					if low {
 						fmt.Fprintf(os.Stderr,
-							"pgfuzz: only %.0f GB free -- stopping the coverage run\n", free)
-						killByAncestor("gcr.io/oss-fuzz/" + r.Project)
+							"pgfuzz: %.0f GB free where the build is, %.0f GB on / -- stopping the coverage run\n",
+							free, rootFree)
+						// BY THE MOUNT, not the image. helper.py coverage runs
+						// base-runner, never the project image, so an
+						// ancestor filter on gcr.io/oss-fuzz/<project> matched
+						// nothing and this guard could never fire. The old
+						// driver matched containers by their /out mount, which
+						// is image-agnostic.
+						killByMount(r.Out)
 						return
 					}
 				}
@@ -195,17 +212,34 @@ func freeGB(path string) (float64, error) {
 	return float64(st.Bavail) * float64(st.Bsize) / (1 << 30), nil
 }
 
-// killByAncestor stops the containers of one project image.
-//
 // Two commands, not one shell string: `docker kill $(docker ps -q ...)` only
 // works when a shell expands it, and passing it to exec runs a container named
 // "$(docker".
-func killByAncestor(image string) {
-	out, err := exec.Command("docker", "ps", "-q", "--filter", "ancestor="+image).Output()
+// killByMount stops the containers that have this build bind-mounted.
+//
+// BY THE MOUNT, NOT THE IMAGE. The previous version filtered on
+// ancestor=gcr.io/oss-fuzz/<project>, and helper.py coverage runs base-runner
+// -- never the project image -- so the filter matched nothing and the disk
+// guard could never fire, however full the disk got. The old driver matched by
+// the /out source path for exactly this reason: it is image-agnostic, and it
+// is still far narrower than "every base-runner on the machine", because it
+// hits only containers using THIS build.
+func killByMount(out string) {
+	ids, err := exec.Command("docker", "ps", "-q").Output()
 	if err != nil {
 		return
 	}
-	for _, id := range strings.Fields(string(out)) {
-		exec.Command("docker", "kill", id).Run()
+	for _, id := range strings.Fields(string(ids)) {
+		src, err := exec.Command("docker", "inspect", "--format",
+			"{{range .Mounts}}{{.Source}}\n{{end}}", id).Output()
+		if err != nil {
+			continue
+		}
+		for _, m := range strings.Split(string(src), "\n") {
+			if strings.TrimSpace(m) == out {
+				exec.Command("docker", "kill", id).Run()
+				break
+			}
+		}
 	}
 }

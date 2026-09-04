@@ -72,9 +72,25 @@ func Prepare(ossFuzz, project, pluginsTSV string) error {
 	// user sees is a Python traceback out of OSS-Fuzz with no mention of a
 	// symlink, on a workspace that built fine an hour earlier.
 	out := filepath.Join(ossFuzz, "build", "out", project)
-	if fi, err := os.Lstat(out); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		if err := os.Remove(out); err != nil {
-			return fmt.Errorf("removing stale build symlink %s: %w", out, err)
+	if fi, err := os.Lstat(out); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(out); err != nil {
+				return fmt.Errorf("removing stale build symlink %s: %w", out, err)
+			}
+		} else if fi.IsDir() {
+			// A REAL DIRECTORY HERE IS LEFTOVER, and it has to go.
+			//
+			// The shell wiped this before every build. helper.py defaults to
+			// clean=False and logs "Keeping existing build artifacts as-is",
+			// and on the happy path the move below empties the directory --
+			// so this only bites after a build that FAILED or was interrupted
+			// part-way. Then the previous ref's binaries survive, the next
+			// build inherits them, and Targets() lists them as this build's
+			// output: a workspace reporting 23 targets of which several were
+			// compiled from another commit.
+			if err := os.RemoveAll(out); err != nil {
+				return fmt.Errorf("clearing the previous build at %s: %w", out, err)
+			}
 		}
 	}
 
