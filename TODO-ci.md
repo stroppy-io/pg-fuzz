@@ -116,9 +116,30 @@ never been run is itself an unproven script.
       attribute the leak to, and so it wrote the empty unit and named it
       `crash-`.
 
-      `-detect_leaks=0` is already passed and does not prevent this. It is a
-      libFuzzer flag governing leak checks DURING fuzzing; LSan's at-exit
-      handler is an ASan runtime option (`ASAN_OPTIONS`).
+      **`-detect_leaks=0` is what makes it empty and misnamed.** The chain,
+      from `/src/libfuzzer/FuzzerLoop.cpp` in the pinned base-builder:
+
+      - `ExecuteCallback` sets `CurrentUnitSize = Size` (611) before the target
+        runs and resets it to 0 (627) the moment the callback returns, while
+        `CurrentUnitData` stays allocated for the life of the process.
+      - LSan's shutdown check finds the leaks and calls `Die()`, which invokes
+        the death callback libFuzzer registered at 142.
+      - `DeathCallback` (190) is generic: `DumpCurrentUnit("crash-")`, prefix
+        hardcoded.
+      - `DumpCurrentUnit` (174) returns early only when `CurrentUnitData` is
+        null. It is not. So it prints the mutation sequence and
+        `; base unit: …` from stale state — which is why the log shows an
+        `MS: 10 CrossOver-…` line for an input that had nothing to do with it —
+        and writes `CurrentUnitSize` bytes. Zero of them.
+
+      libFuzzer's OWN leak path (712) sets `CurrentUnitSize = Size` before
+      `DumpCurrentUnit("leak-")`, so it writes a real, correctly named
+      reproducer. That is precisely the path `-detect_leaks=0` disables, and
+      libFuzzer says as much in its own message: "If LeakSanitizer is enabled
+      in this process it will still run on the process shutdown."
+
+      So the flag does not suppress the leak report. It downgrades it from a
+      `leak-<sha1>` with a reproducer to an anonymous empty `crash-`.
 
       **The leaks themselves are two different things, and only one is real.**
       Two targets of 23 report anything, and the 95 reports split as:
@@ -139,9 +160,21 @@ never been run is itself an unproven script.
       artifact that misdescribes itself. The naming is the CI-relevant half —
       an empty `crash-` file is indistinguishable from a real reproducer to the
       artifact count, the upload, and whoever triages it, and the report
-      already has to explain that an artifact is not a finding. Either set
-      `ASAN_OPTIONS=detect_leaks=0` for these slices, or name a leak-at-exit
-      artifact for what it is; it should not be called `crash-`.
+      already has to explain that an artifact is not a finding.
+
+      Two coherent choices, and the current setting is neither:
+
+      1. `ASAN_OPTIONS=detect_leaks=0` for these slices. No leak check, no
+         artifact, and the pgsql-http leak is not this campaign's job.
+      2. Drop `-detect_leaks=0` and let libFuzzer check. The leak is then
+         caught during fuzzing, named `leak-`, and comes WITH the input that
+         provoked it. Costs time on every mutation, and PostgreSQL's memory
+         contexts will trip it constantly — libFuzzer has a guard for exactly
+         that case (700: "the target function accumulates allocated memory in
+         a global state w/o actually leaking it"), which is a fair description
+         of a memory context.
+
+      Whichever, a zero-byte file should not be called `crash-`.
 
 ## Left to build
 
