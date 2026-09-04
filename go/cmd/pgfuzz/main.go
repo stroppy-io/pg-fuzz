@@ -585,6 +585,25 @@ func cmdBuild(argv []string) int {
 			}
 			fmt.Fprintf(os.Stderr, "    OrioleDB pins PostgreSQL %s to %s\n", useRef, pinned)
 			useRef = pinned
+
+			// A SHALLOW CLONE DOES NOT CONTAIN THE PATCHSET COMMIT, and this
+			// is the second place that has bitten -- the oss-fuzz pin below
+			// was the first, for exactly the same reason.
+			//
+			// `bootstrap -shallow` clones at --depth 1 --no-single-branch, so
+			// it has every BRANCH TIP and no history. Checked against the full
+			// clone on the campaign host, NONE of the three commits .pgtags
+			// names is a tip:
+			//
+			//	PG16 -> 9de7f2bfb89c   is-a-branch-tip: no
+			//	PG17 -> 1e13fa1993dd   is-a-branch-tip: no
+			//	PG18 -> 28592521ad7e   is-a-branch-tip: no
+			//
+			// so a shallow CI runner would resolve the pin correctly and then
+			// fail to export it. Asking for the one commit by sha costs
+			// nothing and is a no-op on a full clone.
+			exec.Command("git", "-C", repoDir, "fetch", "--quiet",
+				"--depth", "1", "origin", pinned).Run()
 		}
 	}
 	repo := source.Repo{Dir: repoDir}

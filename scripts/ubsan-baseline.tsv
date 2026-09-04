@@ -34,4 +34,4 @@ inet_net_pton_ipv4	*	inet_net_pton.c octet accumulation, non-CIDR path	signed-ov
 do_to_timestamp	*	formatting.c to_date / to_timestamp field arithmetic	signed-overflow	FINDINGS/README.md	2026-08-18
 # Rewritten with pg_mul_s64_overflow/pg_add_s64_overflow upstream; the 18+ and
 # master trees should NOT produce it. If they do, that is a finding.
-tm2timestamp	pg16*,pg17*,ci-rel_16*,ci-rel_17*,oriole16*,oriole17*,oriolebare16*,oriolebare17*	timestamp.c date * USECS_PER_DAY	signed-overflow	FINDINGS/README.md	2026-08-18
+tm2timestamp	pg16*,pg17*,ci-rel_16*,ci-rel_17*,ci-oriole16*,ci-oriole17*,oriole16*,oriole17*,oriolebare16*,oriolebare17*	timestamp.c date * USECS_PER_DAY	signed-overflow	FINDINGS/README.md	2026-08-18

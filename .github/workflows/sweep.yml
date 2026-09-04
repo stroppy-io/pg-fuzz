@@ -77,6 +77,20 @@ jobs:
       matrix:
         ref: [REL_16_STABLE, REL_17_STABLE, REL_18_STABLE, REL_19_STABLE, master]
         sanitizer: [address, undefined]
+        # ORIOLEDB, as `include` rather than a third dimension, because it does
+        # not cross with the refs above: OrioleDB is a PATCHED PostgreSQL, and
+        # its ref is a bare MAJOR resolved through the extension's own .pgtags
+        # -- "16", not "origin/REL_16_STABLE" -- because it refuses to build
+        # against any other patchset commit. .pgtags pins 16, 17 and 18, so
+        # those three majors times the two sanitizers is the whole of what
+        # exists to sweep.
+        include:
+          - {ref: "16", sanitizer: address,   flavor: orioledb}
+          - {ref: "16", sanitizer: undefined, flavor: orioledb}
+          - {ref: "17", sanitizer: address,   flavor: orioledb}
+          - {ref: "17", sanitizer: undefined, flavor: orioledb}
+          - {ref: "18", sanitizer: address,   flavor: orioledb}
+          - {ref: "18", sanitizer: undefined, flavor: orioledb}
 
     steps:
       - uses: actions/checkout@v4
@@ -144,20 +158,40 @@ jobs:
           # gcr.io/oss-fuzz/pgfuzz-ci-REL_16_STABLE-address` with "repository
           # name must be lowercase" -- a docker USAGE error, which is why the
           # message was "Run 'docker build --help'" rather than a build log.
-          ws="ci-${{ matrix.ref }}-${{ matrix.sanitizer }}"
+          ws="ci-${{ matrix.flavor && 'oriole' || 'rel' }}${{ matrix.ref }}-${{ matrix.sanitizer }}"
           echo "WS=$(printf '%s' "$ws" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: clone the substrate
         run: |
           mkdir -p "$PGFUZZ_WS" "$PGFUZZ_CACHE"
-          # Shallow, and only what a PostgreSQL build needs: the OrioleDB
-          # clones are another 700 MB this matrix never touches.
-          pgfuzz bootstrap -shallow -only postgres,oss-fuzz
+          # Shallow, and only what THIS item needs. The OrioleDB clones are
+          # another ~700 MB, so the ten stock rows do not pay for them and the
+          # six OrioleDB rows do.
+          #
+          # orioledb AND orioledb-postgres, both: the extension repo carries
+          # .pgtags, which is what turns a bare major into the exact
+          # PostgreSQL commit its patchset applies to, and the fork is what
+          # gets exported.
+          if [ -n "${{ matrix.flavor }}" ]; then
+              pgfuzz bootstrap -shallow -only postgres,oss-fuzz,orioledb,orioledb-postgres
+          else
+              pgfuzz bootstrap -shallow -only postgres,oss-fuzz
+          fi
 
       - name: workspace
         run: |
-          pgfuzz ws -new "$WS" -ref "origin/${{ matrix.ref }}" \
-                    -sanitizer "${{ matrix.sanitizer }}"
+          # ORIOLEDB TAKES A BARE MAJOR, stock PostgreSQL takes a branch.
+          # OrioleDB resolves "17" through its own .pgtags to the exact
+          # PostgreSQL commit its patchset applies to, and refuses anything
+          # else; origin/REL_17_STABLE is precisely the thing it will not build
+          # against.
+          if [ -n "${{ matrix.flavor }}" ]; then
+              pgfuzz ws -new "$WS" -flavor orioledb -ref "${{ matrix.ref }}" \
+                        -sanitizer "${{ matrix.sanitizer }}"
+          else
+              pgfuzz ws -new "$WS" -ref "origin/${{ matrix.ref }}" \
+                        -sanitizer "${{ matrix.sanitizer }}"
+          fi
           # A PATCH AND PLUGINS, because both are pipelines that were wired to
           # nothing at some point in this port's history. The patch adds a file
           # nothing compiles, so it applies to every major and cannot change
@@ -183,6 +217,16 @@ jobs:
           # supports 20. It comes out on master and stays everywhere else, so
           # master still sweeps with pgaudit and pgsql-http rather than not
           # sweeping at all.
+          #
+          # NO OUT-OF-TREE PLUGINS ON ORIOLEDB, deliberately. The plugin
+          # pipeline is already exercised by the ten stock rows; adding three
+          # extensions on top of a PATCHED PostgreSQL tree would put a second
+          # variable in the one place this flavor is meant to isolate, and a
+          # red board would not say which of the two caused it. The existing
+          # oriole workspaces on the campaign host carry none either.
+          if [ -n "${{ matrix.flavor }}" ]; then
+              echo "  orioledb: no out-of-tree plugins by design"
+          else
           case "${{ matrix.ref }}" in
               REL_16_STABLE) audit=16.1    ; bg=" pg_background" ;;
               REL_17_STABLE) audit=17.1    ; bg=" pg_background" ;;
@@ -192,6 +236,7 @@ jobs:
               *) echo "no pgaudit version is mapped for ${{ matrix.ref }}" >&2; exit 1 ;;
           esac
           echo "plugins=pgaudit@$audit$bg pgsql-http" >> "$conf"
+          fi
           cat "$conf"
 
       # NO SEPARATE BUILD STEP.
