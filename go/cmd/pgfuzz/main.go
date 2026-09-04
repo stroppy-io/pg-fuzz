@@ -1049,6 +1049,15 @@ func cmdGate(argv []string) int {
 	baseline := fs.String("baseline", "", "ubsan accept-list (default: the repo's)")
 	since := fs.Duration("since", 0, "only judge logs written within this window")
 	minStats := fs.Int("min-stats", 90, "percent of slices that must report final stats")
+	// WHERE THE LOGS ARE, which is not always the workspace.
+	//
+	// A sealed campaign writes its slices under campaigns/<slug>/ws/<name>,
+	// and that directory holds no workspace.conf -- so the conf has to come
+	// from the workspace while the evidence comes from the campaign. Passing
+	// the workspace for both is how every sealed run was judged against
+	// whatever stale logs the workspace happened to keep: 247 slices in the
+	// campaign, 2 in the workspace, and the gates read the 2.
+	logsDir := fs.String("logs", "", "read run logs from here instead of the workspace")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil || *ws == "" {
 		fs.Usage()
@@ -1090,7 +1099,11 @@ func cmdGate(argv []string) int {
 	// to catch a short round passes every short round. The old check carried
 	// an explicit --since because round numbers restart and a shorter
 	// campaign leaves the previous one's logs in place.
-	all := gatherRunLogs(dir)
+	logRoot := dir
+	if *logsDir != "" {
+		logRoot = *logsDir
+	}
+	all := gatherRunLogs(logRoot)
 	runLogs := newestPerTarget(all)
 	if *since > 0 {
 		cut := time.Now().Add(-*since)
@@ -1764,6 +1777,10 @@ func cmdRatchet(argv []string) int {
 	reseed := fs.String("reseed", "", "recompute this target's floors from qualifying rounds")
 	reason := fs.String("reason", "", "why the floors are being recomputed; required by -reseed")
 	since := fs.String("since", "", "ignore records older than this ISO prefix")
+	// See the note on gate's -logs: a sealed campaign's slices are not under
+	// the workspace, and the ratchet judged and RAISED FLOORS FROM whatever
+	// stale logs the workspace still held.
+	ratchetLogs := fs.String("logs", "", "read run logs from here instead of the workspace")
 	top := fs.Int("top", 8, "how many of the largest raises to list")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
@@ -1821,6 +1838,9 @@ func cmdRatchet(argv []string) int {
 	var readFrom, readFromPath string
 	regime := ratchet.Regime(*jobs)
 	sweep := ratchet.SweepLog(dir, *round)
+	if *ratchetLogs != "" {
+		dir = *ratchetLogs
+	}
 	perTarget := gatherRunLogs(dir)
 	if *round < 0 && sweep != "" && len(perTarget) > 0 && newest(perTarget).After(mtime(sweep)) {
 		sweep = ""
@@ -5389,6 +5409,13 @@ func humanBytes(n int64) string {
 // notices, the numbers look complete, and the ratchet reads an artificially
 // low slice as a regression in the target rather than as a fact about the
 // filesystem.
+// roundWindow is how far back the per-round gates look.
+//
+// A round is minutes to hours; this is deliberately generous so a long sweep
+// is still judged whole, and still short enough that a previous campaign's
+// logs are not dragged into this one's verdict.
+const roundWindow = 12 * time.Hour
+
 func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable string) {
 	if notJudgeable != "" {
 		fmt.Fprintf(os.Stderr, "  gates skipped: %s\n", notJudgeable)
@@ -5411,12 +5438,34 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeab
 		return 0
 	}
 	j := strconv.Itoa(jobs)
-	if code := run("ratchet check", "ratchet", "-w", e.Dir, "-jobs", j); code == 1 {
+
+	// EVERY GATE, not just the ratchet.
+	//
+	// The shell spliced FIVE checks into each workspace-round -- starvation,
+	// round-completeness, the UBSan accept-list, slow units and final stats --
+	// and then the ratchet. The port restored the ratchet caller and stopped
+	// there, under a commit message that said "the gates" plural. So during an
+	// unattended campaign the other five produced no verdict at all: they were
+	// reachable only by a person typing `pgfuzz gate`, which is precisely the
+	// thing an overnight run does not have.
+	//
+	// Scoped to this round by -since, because judging every log a workspace
+	// has ever kept lets a dead target from weeks ago fail a healthy round and
+	// a healthy log from weeks ago pass a dead one.
+	// -logs is where THIS campaign wrote, which for a sealed run is not the
+	// workspace. Without it the gates judged, and the ratchet raised floors
+	// from, logs belonging to some earlier run.
+	if code := run("gate", "gate", "-w", e.Dir, "-logs", e.Data,
+		"-since", roundWindow.String()); code == 1 {
+		fmt.Fprintf(os.Stderr, "  !! %s FAILED A GATE in round %d\n", e.Name, round)
+	}
+	if code := run("ratchet check", "ratchet", "-w", e.Dir, "-logs", e.Data,
+		"-jobs", j); code == 1 {
 		// Reported, not fatal. The campaign's job is to keep fuzzing; the
 		// regression is a fact about this round and the series records it.
 		fmt.Fprintf(os.Stderr, "  !! %s REGRESSED in round %d\n", e.Name, round)
 	}
-	run("ratchet update", "ratchet", "-w", e.Dir, "-update", "-jobs", j)
+	run("ratchet update", "ratchet", "-w", e.Dir, "-logs", e.Data, "-update", "-jobs", j)
 }
 
 // openMaybeGzip opens a log that may or may not be compressed.
