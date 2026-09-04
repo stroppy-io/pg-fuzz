@@ -1,0 +1,62 @@
+# Findings the harness MUST still find, and must still report.
+#
+# WHY THIS FILE EXISTS. Every other gate in this project asks "did anything go
+# wrong". None of them asks "would we have noticed if it had". A sweep that
+# builds, fuzzes for twenty minutes, gates cleanly and ships a report proves
+# the pipeline RAN -- it proves nothing whatever about whether the pipeline can
+# still SEE. A harness that silently stopped parsing UBSan output, or stopped
+# carrying parsed sites into the census, would pass every check on the board
+# and go on passing them forever.
+#
+# So this is the positive control, and it fails in the opposite direction from
+# everything else here: absence is the failure. The project's rule that
+# "absence is never a pass" is usually about not reading silence as health;
+# this is the same rule pointed at the instrument instead of the subject.
+#
+# NOT A LIST OF BUGS TO FIX. These are recorded findings that a short run
+# reaches reliably. They are here because they are DEPENDABLE, not because they
+# are important -- a defect that fires once a week is a fine finding and a
+# useless canary. Fixing one upstream is not a problem: withdraw the row, in a
+# commit that says the fix landed.
+#
+# BUILT FROM OBSERVATION, NOT FROM THE ACCEPT-LIST. Every row below was seen in
+# GitHub run 33891551739, in BOTH REL_16_STABLE and REL_17_STABLE, at 30
+# seconds a target. The counts were near-identical across two independent
+# builds, which is the property that makes them assertable. Note what is NOT
+# here: pg_strtoint64_safe is on the UBSan accept-list and did not fire once in
+# either run, so it is a real accepted site and an unusable canary. Do not add
+# a row because it appears in FINDINGS -- add it because a run produced it
+# twice.
+#
+# KEYED ON FUNCTION, NOT LINE. timestamp.c:1945 on 16 is timestamp.c:2016 on
+# 17. The function survives a rebase; the line does not.
+#
+# TWO ASSERTIONS PER ROW, because "found" and "reported" are different claims:
+#   found     the function is the innermost frame of a UB report in the logs
+#   reported  the census turned that log into a signature naming the file
+# The first can pass while the second fails -- that is exactly the regression
+# where parsing still works and the reporting layer has quietly come loose.
+# "reported" is file-level because the census keys signatures on file:line,
+# which is why the file column is here rather than being derivable.
+#
+# scope is a comma-separated list of workspace-name globs, as in
+# scripts/ubsan-baseline.tsv, and the star may appear anywhere.
+#
+# THE SANITIZER IS PART OF THE SCOPE. A UBSan site cannot fire in an ASan
+# build, so "ci-rel_16*" was wrong -- it matched ci-rel_16_stable-address and
+# asserted seven findings against a run that could not physically produce one.
+# The first draft of this file did exactly that and the control failed 7 of 7
+# on a healthy workspace, which is the right failure for the wrong reason.
+#
+# 18+ has no rows yet: those builds have never completed a sweep, so there is
+# no observation to base one on, and a guess here would defeat the purpose of
+# the file.
+#
+# function	scope	file	class	reference	added
+do_to_timestamp	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	formatting.c	signed-overflow	FINDINGS/README.md	2026-09-04
+tm2timestamp	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	timestamp.c	signed-overflow	FINDINGS/README.md	2026-09-04
+date2j	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	datetime.c	signed-overflow	FINDINGS/README.md	2026-09-04
+isoweek2j	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	timestamp.c	signed-overflow	FINDINGS/README.md	2026-09-04
+pg_strtoint32_safe	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	numutils.c	signed-overflow	FINDINGS/README.md	2026-09-04
+inet_net_pton_ipv4	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	inet_net_pton.c	signed-overflow	FINDINGS/README.md	2026-09-04
+inet_cidr_pton_ipv4	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	inet_net_pton.c	signed-overflow	FINDINGS/README.md	2026-09-04

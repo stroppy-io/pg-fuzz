@@ -113,6 +113,20 @@ step "bundle" bash -c '
 ' "$SLUG" "$OUT/bundle"
 
 # THE THINGS THAT READ A FINISHED RUN.
+# THE POSITIVE CONTROL, and the only step here that fails on SILENCE.
+#
+# Everything above asks whether anything went wrong. None of it asks whether
+# the instrument would have noticed -- a harness that stopped parsing UBSan
+# output, or stopped carrying parsed sites into the census, passes every gate,
+# ships a clean report, and keeps doing so. This asserts that findings the run
+# is known to reach are still found AND still reported, which are two different
+# claims: the interesting regression is the one where the logs are right and
+# the reporting layer has come loose.
+#
+# A workspace no row is scoped to passes without asserting anything, and says
+# so rather than reporting a green it did not earn.
+step "expect" pgfuzz expect -w "$WS" -slug "$SLUG"
+
 step "census"    pgfuzz census    -slug "$SLUG" -w "$WS" -o "$OUT/census" -summary
 step "inventory" pgfuzz inventory -w "$WS"
 # NOTHING TO BREAK DOWN IS NOT A FAILURE HERE. breakdown exits 2 when a

@@ -35,6 +35,7 @@ import (
 	"pgfuzz/internal/census"
 	"pgfuzz/internal/corpus"
 	"pgfuzz/internal/coverage"
+	"pgfuzz/internal/expect"
 	"pgfuzz/internal/finalreport"
 	"pgfuzz/internal/fuzz"
 	"pgfuzz/internal/gate"
@@ -107,6 +108,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz log    -w <ws> -title T [-line L ...]
   pgfuzz census -w <ws> [-w <ws>...] -o DIR
   pgfuzz gate  -w <workspace> [-floor N] [-baseline FILE] [-since D] [-min-stats P]
+  pgfuzz expect -w <ws> [-slug S | -logs DIR] [-list FILE]
   pgfuzz soak  -w <ws> [-hours H] [-concurrent N] [-jobs N] [-mult N]
   pgfuzz reverify [-findings DIR] [-only NAME] [-runs N]
   pgfuzz triage-sweep -w <ws> [-runs N]
@@ -250,6 +252,8 @@ func main() {
 		os.Exit(cmdCensus(os.Args[2:]))
 	case "gate":
 		os.Exit(cmdGate(os.Args[2:]))
+	case "expect":
+		os.Exit(cmdExpect(os.Args[2:]))
 	case "soak":
 		os.Exit(cmdSoak(os.Args[2:]))
 	case "reverify":
@@ -1335,6 +1339,113 @@ func cmdGate(argv []string) int {
 	fmt.Printf("\n%d harness failure(s), %d finding(s)  %s  [%s]\n",
 		failed, findings, c.Name, strings.Join(failedNames, " "))
 	return 1
+}
+
+// cmdExpect asserts the harness still finds, and still reports, what it is
+// known to find.
+//
+// THE ONE CHECK THAT FAILS ON SILENCE. Every other gate reads a quiet run as a
+// healthy one, which is correct when the question is "did anything break" and
+// exactly wrong when the question is "would we know". A harness that stopped
+// parsing UBSan output passes starvation, slow-units, final-stats and
+// round-complete, ships a clean report, and keeps doing so.
+//
+// Two claims per row, not one. `found` reads the run logs: the function was
+// the innermost frame of a UB report. `reported` reads the census built from
+// those same logs: a signature names the file. Both must hold, because the
+// interesting regression is the one where parsing still works and the
+// reporting layer has quietly come loose -- and a check that only looked at
+// the logs would call that healthy.
+func cmdExpect(argv []string) int {
+	fs := flag.NewFlagSet("expect", flag.ExitOnError)
+	ws := fs.String("w", "", "workspace")
+	slug := fs.String("slug", "", "read logs from this sealed campaign")
+	logsDir := fs.String("logs", "", "read run logs from here instead of the workspace")
+	list := fs.String("list", "", "expected findings (default: project/ci-findings.tsv)")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
+	if err := fs.Parse(argv); err != nil || *ws == "" {
+		fs.Usage()
+		return 2
+	}
+	r := paths.Resolve()
+	if *list == "" {
+		home, err := r.NeedHome()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+		*list = filepath.Join(home, "project", "ci-findings.tsv")
+	}
+	wants, err := expect.Load(*list)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 2
+	}
+
+	// WHERE THIS RUN WROTE, which for a sealed campaign is not the workspace.
+	dir := filepath.Join(r.WS, *ws)
+	switch {
+	case *logsDir != "":
+		dir = *logsDir
+	case *slug != "":
+		dir = filepath.Join(r.WS, "campaigns", *slug, "ws", *ws)
+	}
+
+	runLogs := gatherRunLogs(dir)
+	if len(runLogs) == 0 {
+		// NOT a pass, and emphatically not here: a control that checked
+		// nothing has demonstrated nothing.
+		fmt.Fprintf(os.Stderr, "pgfuzz: no run logs under %s -- nothing was checked\n", dir)
+		return 2
+	}
+
+	seen := map[string]bool{}
+	b := census.New()
+	for _, lg := range runLogs {
+		st, err := logs.ParseFile(lg)
+		if err != nil {
+			continue
+		}
+		for _, u := range st.UB {
+			seen[u.Function] = true
+		}
+	}
+	addLogsFrom(b, dir, *ws)
+	reported := map[string]bool{}
+	for _, row := range b.Rows() {
+		for _, src := range row.Sources {
+			reported[filepath.Base(src)] = true
+		}
+	}
+
+	res := expect.Check(wants, *ws, seen, reported)
+	if len(res) == 0 {
+		// A workspace no row is scoped to is not a failure -- 18+ has no rows
+		// because no sweep has produced the observation yet -- but it is not a
+		// pass either, and saying so is the difference between the two.
+		fmt.Printf("no expected findings are scoped to %s"+
+			" -- this run asserts nothing about what the harness can see\n", *ws)
+		return 0
+	}
+	for _, x := range res {
+		mark := "ok  "
+		if !x.OK() {
+			mark = "MISS"
+		}
+		fmt.Printf("  %s %-22s %-18s found=%-5v reported=%-5v\n",
+			mark, x.Want.Function, x.Want.File, x.Found, x.Reported)
+	}
+	if n := expect.Missing(res); n > 0 {
+		fmt.Fprintf(os.Stderr,
+			"\n%d of %d expected finding(s) did not appear in %s.\n"+
+				"  This is the harness failing to see, not PostgreSQL improving.\n"+
+				"  If one was genuinely fixed upstream, withdraw its row in a commit\n"+
+				"  that says so -- do not widen the run until it comes back.\n",
+			n, len(res), *ws)
+		return 1
+	}
+	fmt.Printf("all %d expected finding(s) were found and reported  %s\n", len(res), *ws)
+	return 0
 }
 
 // targetOf names the target a log belongs to, from either layout.

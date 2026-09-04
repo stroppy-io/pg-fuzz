@@ -16,6 +16,7 @@ package gate
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -274,11 +275,23 @@ func inScope(accepted []Accepted, fn, ws string) bool {
 }
 
 // matchGlob handles the trailing-* form the baseline uses.
+// matchGlob matches a workspace name against a scope pattern.
+//
+// A TRAILING STAR WAS NOT ENOUGH. The old version handled only "prefix*", so a
+// scope could say "every 16 workspace" but never "every 16 workspace built
+// with UBSan" -- and a UBSan site cannot fire in an ASan build, so a row
+// scoped ci-rel_16* was asserted against ci-rel_16_stable-address, where it
+// could not possibly hold. path.Match takes a star anywhere, and every pattern
+// the old code accepted means exactly what it meant before: "pg16*" still
+// matches pg16-11, and a pattern with no star is still an equality test.
+//
+// A malformed pattern (a stray "[") makes path.Match return an error, and a
+// scope that cannot be parsed must not silently match everything -- that would
+// accept a site anywhere. It matches nothing instead, which surfaces as the
+// row failing where it was meant to apply.
 func matchGlob(pat, s string) bool {
-	if strings.HasSuffix(pat, "*") {
-		return strings.HasPrefix(s, strings.TrimSuffix(pat, "*"))
-	}
-	return pat == s
+	ok, err := path.Match(pat, s)
+	return err == nil && ok
 }
 
 // RoundComplete fails a round that did not reach every built target.
