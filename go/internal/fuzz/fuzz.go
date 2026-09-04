@@ -304,6 +304,28 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	// the harvest below still runs.
 	stopGuard := make(chan struct{})
 	var diskStopped, hung atomic.Bool
+
+	// THE SAMPLER, at a fixed cadence for as long as the slice runs.
+	//
+	// It writes whether or not libFuzzer has anything to say, which is the
+	// whole point: the gaps between progress lines are what make a stall
+	// visible, and a summary derived from the log alone cannot see them.
+	samplePath := SamplePath(logPath)
+	go func() {
+		t := time.NewTicker(SampleInterval)
+		defer t.Stop()
+		start := time.Now()
+		for {
+			select {
+			case <-stopGuard:
+				return
+			case <-t.C:
+				AppendSample(samplePath,
+					sampleLog(logPath, r.Target, start, containerCPUSec(name)))
+			}
+		}
+	}()
+
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
