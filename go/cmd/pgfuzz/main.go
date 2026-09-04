@@ -76,7 +76,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz report   -exec  [-prefix P] [-html FILE]
   pgfuzz report   -funnel <campaign.jsonl> [-against <other.jsonl>]
   pgfuzz report   -record <campaign.jsonl> [-against <other.jsonl>]
-  pgfuzz tui      [<slug>|<path>]   default: the campaign you are standing in
+  pgfuzz tui      [<slug>|<path>] [-only GLOB]   f cycles all/active/live
   pgfuzz coverage -w <cov-workspace> [-union] [-measure [-t TARGET]]
                   [-min-free-gb N] [-stop-free-gb N]
   pgfuzz ratchet  -w <workspace> [-update] [-baseline FILE]
@@ -2078,6 +2078,7 @@ func cmdRatchet(argv []string) int {
 func cmdTUI(argv []string) int {
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	slug := fs.String("slug", "", "campaign name or a path to one; default: where you are standing")
+	only := fs.String("only", "", "show only workspaces matching this glob (f cycles all/active/live)")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil {
 		return 2
@@ -2122,6 +2123,7 @@ func cmdTUI(argv []string) int {
 	defer os.Stdout.WriteString(term.LeaveAlt)
 
 	view, sel := tui.Grid, 0
+	filter := tui.FilterAll
 	var screen term.Screen
 	buf := make([]byte, 8)
 	tick := time.NewTicker(tui.Interval)
@@ -2129,6 +2131,10 @@ func cmdTUI(argv []string) int {
 
 	draw := func() {
 		m := tui.LoadWithPanels(r.Campaigns(), *slug, r.Home, r.WS)
+		// FILTERED, AND SAID SO. A short grid that does not say it is
+		// filtered is indistinguishable from a campaign that lost workspaces.
+		m.Rows, m.RowsTotal = tui.Apply(m.Rows, filter, *only)
+		m.Filter = filter.String()
 		if sel >= len(m.Rows) {
 			sel = len(m.Rows) - 1
 		}
@@ -2178,6 +2184,10 @@ func cmdTUI(argv []string) int {
 			draw()
 		case 'g', 'G':
 			view = tui.Grid
+			draw()
+		case 'f', 'F':
+			// Cycle all -> active -> live, as the Python did.
+			filter = filter.Next()
 			draw()
 		case 'k':
 			sel--

@@ -105,15 +105,20 @@ type Model struct {
 	// A coverage pass is BOUNDED, which is what makes a completion figure
 	// meaningful here where it is meaningless for a fuzzing round.
 	CovDone, CovTotal int
-	Live              bool
-	Round             int
-	Targets           []string
-	Rows              []Row
-	Slices            int
-	TotalExec         int
-	TotalNew          int
-	TotalArts         int
-	Err               string
+	// RowsTotal is how many rows there were before filtering, and Filter is
+	// which filter is on. Both are drawn, because a short grid that does not
+	// say it is filtered reads as a campaign that lost workspaces.
+	RowsTotal int
+	Filter    string
+	Live      bool
+	Round     int
+	Targets   []string
+	Rows      []Row
+	Slices    int
+	TotalExec int
+	TotalNew  int
+	TotalArts int
+	Err       string
 
 	// Workspaces being BUILT right now. A campaign builds into its own
 	// directory before it sweeps, and before this the dashboard said "no

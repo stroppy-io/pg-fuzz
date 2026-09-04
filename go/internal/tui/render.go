@@ -93,6 +93,12 @@ func drawHeader(s *term.Screen, m Model) {
 	s.Line(1, fmt.Sprintf("%s%s%s  %s   %s   round %d   built %d/%d   reproducers %d   %s",
 		term.Bold, m.Slug, term.Reset, state,
 		phaseLabel(m), m.Round, m.Built, len(m.Rows), m.TotalArts, clock))
+	if m.RowsTotal > len(m.Rows) {
+		// SAID, because a short grid that does not say it is filtered reads
+		// as a campaign that lost workspaces.
+		s.Line(3, term.Yellow+fmt.Sprintf("showing %d of %d rows (filter: %s -- f cycles, -only narrows)",
+			len(m.Rows), m.RowsTotal, m.Filter)+term.Reset)
+	}
 	s.Line(2, term.Dim+"NOW: "+term.Reset+m.Activity)
 }
 
