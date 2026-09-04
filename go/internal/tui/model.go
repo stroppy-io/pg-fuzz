@@ -126,16 +126,20 @@ type Model struct {
 	// History is the other campaigns under this root, newest first, for the
 	// view `h` opens. A dashboard could not previously answer "what did the
 	// last five campaigns find" without leaving it.
-	History   []HistoryRow
-	Live      bool
-	Round     int
-	Targets   []string
-	Rows      []Row
-	Slices    int
-	TotalExec int
-	TotalNew  int
-	TotalArts int
-	Err       string
+	History []HistoryRow
+	// SliceStats is the runs slice accounting: finished, in flight, and how
+	// many reported nothing. Silence was detected only at gate time, which is
+	// after the round.
+	SliceStats Slices
+	Live       bool
+	Round      int
+	Targets    []string
+	Rows       []Row
+	Slices     int
+	TotalExec  int
+	TotalNew   int
+	TotalArts  int
+	Err        string
 
 	// Workspaces being BUILT right now. A campaign builds into its own
 	// directory before it sweeps, and before this the dashboard said "no
@@ -429,6 +433,10 @@ func Load(campaignsRoot, slug string) Model {
 			}
 		}
 	}
+
+	// The slice accounting, from the same rows the grid is built from. In
+	// flight is what docker says is running now, which the series cannot know.
+	m.SliceStats = SliceStats(rows, len(RunningNow()), m.Started, time.Now())
 
 	running := RunningNow()
 	for name, w := range byWS {

@@ -465,6 +465,9 @@ func drawDetail(s *term.Screen, m Model, sel int) {
 // 23 targets on a line and are meaningless on sight, and there is empty space
 // below the grid, so they get spelled out where there is room.
 func drawPanels(s *term.Screen, m Model, y int) int {
+	// WHAT THE SLICES DID, first, because it is the line that says whether
+	// the numbers above it can be used at all.
+	y = drawSlices(s, m, y)
 	if len(m.Growth) > 0 {
 		// SAY WHICH RECORD THIS IS. The corpus and +new columns above come
 		// from THIS campaign's series; these curves come from the ratchet
