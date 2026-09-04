@@ -55,16 +55,28 @@ func TestGateScopesToARoundWhenAsked(t *testing.T) {
 		return string(b)
 	}
 
-	// Unscoped: the two-week-old log still counts, and the gate says so
-	// rather than implying the verdict covers this round.
+	// SAME-DAY BY DEFAULT, as the shell was. With no -since the two-week-old
+	// log is out of scope: a human asking about a workspace gets a verdict on
+	// the round that just ran, not one mixing in a dead log from a fortnight
+	// ago.
 	out := run("-w", "w1")
-	if !strings.Contains(out, "of any age") {
-		t.Errorf("an unscoped run must say its verdict is unscoped:\n%s", out)
+	if !strings.Contains(out, "judging 1 of 2") {
+		t.Errorf("the default scope did not drop the two-week-old log:\n%s", out)
 	}
 
-	// Scoped to a day: only the fresh log is judged.
-	out = run("-w", "w1", "-since", "24h")
-	if !strings.Contains(out, "judging 1 of 2") {
-		t.Errorf("-since did not drop the two-week-old log:\n%s", out)
+	// Explicitly unscoped: everything counts, and the gate says so rather
+	// than implying the verdict covers one round.
+	out = run("-w", "w1", "-since", "0")
+	if !strings.Contains(out, "of any age") {
+		t.Errorf("-since 0 must say its verdict is unscoped:\n%s", out)
+	}
+	if !strings.Contains(out, "2 of 2") && !strings.Contains(out, "2 logs") {
+		t.Errorf("-since 0 did not judge both logs:\n%s", out)
+	}
+
+	// And a window that excludes everything is not a pass.
+	out = run("-w", "w1", "-since", "1ns")
+	if strings.Contains(out, "all gates passed") {
+		t.Errorf("a window with no logs in it reported a pass:\n%s", out)
 	}
 }
