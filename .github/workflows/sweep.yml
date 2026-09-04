@@ -295,6 +295,7 @@ jobs:
             ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/build.log
             ${{ env.PGFUZZ_WS }}/campaigns/ci/series.jsonl
             ${{ env.PGFUZZ_WS }}/campaigns/ci/MANIFEST.json
+            ${{ runner.temp }}/out/summary.md
             ${{ runner.temp }}/out/campaign.log
             ${{ runner.temp }}/out/report.md
             ${{ runner.temp }}/out/index.html

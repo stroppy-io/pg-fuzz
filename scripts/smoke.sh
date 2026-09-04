@@ -154,7 +154,12 @@ frame_folded() {
 # for a second reason besides replacement: an appending summary across a
 # retried step would grow without bound.
 summarise() {
-	[ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+	# KEPT, not just sent. $GITHUB_STEP_SUMMARY is write-only from here: once
+	# the step ends there is no way to ask what was in it, so "the page is
+	# empty" and "we wrote nothing" are the same observation from outside.
+	# The copy goes into the record artifact, where it can be read back.
+	local copy="$OUT/summary.md"
+	mkdir -p "$OUT"
 	{
 		printf '## %s\n\n' "$WS"
 		printf '```\n'
@@ -164,7 +169,11 @@ summarise() {
 			# The report's own H1 would compete with the job summary's heading.
 			sed '1s/^# /## /' "$OUT/report.md"
 		fi
-	} > "$GITHUB_STEP_SUMMARY"
+	} > "$copy"
+	[ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$copy" > "$GITHUB_STEP_SUMMARY"
+	# Said out loud, because a silent write is indistinguishable from no write.
+	printf '   summary: %s bytes -> %s\n' "$(wc -c < "$copy")" \
+		"${GITHUB_STEP_SUMMARY:-(not on GitHub; kept at $copy)}"
 }
 
 # A FRAME WHILE IT RUNS, not only when it is over.
