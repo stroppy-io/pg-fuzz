@@ -108,10 +108,36 @@ func Repair(dir string) (fixed int, err error) {
 // Copies, never moves or links: the source campaign keeps running, and a
 // hard link means a later minimisation in one workspace silently changes the
 // other's corpus.
+// SeedResult separates what happened, because one counter could not.
+//
+// "already present" and "could not be copied" were both counted as skipped and
+// printed as "N already present", so a half-readable source reported success.
+// Present is correct and cheap -- libFuzzer names files after the SHA-1 of
+// their content, so a name that exists is the same input. Failed is a fault.
+type SeedResult struct {
+	Copied  int
+	Present int
+	Failed  int
+	// FirstErr is why the first failure happened, so a caller can say more
+	// than a count.
+	FirstErr error
+}
+
+// Seed copies one workspace's corpus into another.
+//
+// The int returns are kept for callers that only want the totals; SeedInto
+// gives the breakdown.
 func Seed(srcRoot, dstRoot string) (copied, skipped int, err error) {
+	r, err := SeedInto(srcRoot, dstRoot)
+	return r.Copied, r.Present + r.Failed, err
+}
+
+// SeedInto is Seed with the failures separated from the duplicates.
+func SeedInto(srcRoot, dstRoot string) (SeedResult, error) {
+	var res SeedResult
 	targets, err := os.ReadDir(srcRoot)
 	if err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	for _, t := range targets {
 		if !t.IsDir() {
@@ -120,7 +146,7 @@ func Seed(srcRoot, dstRoot string) (copied, skipped int, err error) {
 		src := filepath.Join(srcRoot, t.Name())
 		dst := filepath.Join(dstRoot, t.Name())
 		if err := os.MkdirAll(dst, 0o755); err != nil {
-			return copied, skipped, err
+			return res, err
 		}
 		ents, err := os.ReadDir(src)
 		if err != nil {
@@ -135,17 +161,23 @@ func Seed(srcRoot, dstRoot string) (copied, skipped int, err error) {
 			// correct and cheap, and re-copying would only rewrite it.
 			out := filepath.Join(dst, e.Name())
 			if _, err := os.Stat(out); err == nil {
-				skipped++
+				res.Present++
 				continue
 			}
 			if err := copyFile(filepath.Join(src, e.Name()), out); err != nil {
-				skipped++
+				// A FAULT, not a duplicate. Counting it as skipped and
+				// printing "already present" is how an unreadable source
+				// reported success.
+				res.Failed++
+				if res.FirstErr == nil {
+					res.FirstErr = err
+				}
 				continue
 			}
-			copied++
+			res.Copied++
 		}
 	}
-	return copied, skipped, nil
+	return res, nil
 }
 
 func copyFile(src, dst string) error {

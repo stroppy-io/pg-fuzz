@@ -2561,16 +2561,31 @@ func cmdCorpus(argv []string) int {
 		}
 		// Repair the SOURCE first: seeding from a corpus half of which cannot
 		// be read copies half a corpus and reports success.
-		if n, _ := corpus.Repair(filepath.Join(srcDir, "corpus")); n > 0 {
+		// The repair's own error was discarded, so a repair that could not run
+		// -- no docker, a partial chown -- was invisible, and the seed that
+		// followed silently copied whatever half it could read.
+		if n, err := corpus.Repair(filepath.Join(srcDir, "corpus")); err != nil {
+			fmt.Fprintf(os.Stderr, "pgfuzz: could not repair %s first: %v\n", *seedFrom, err)
+			return 2
+		} else if n > 0 {
 			fmt.Fprintf(os.Stderr, "  repaired %d unreadable entries in %s first\n", n, *seedFrom)
 		}
-		copied, skipped, err := corpus.Seed(filepath.Join(srcDir, "corpus"), root)
+		res, err := corpus.SeedInto(filepath.Join(srcDir, "corpus"), root)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
 		}
 		fmt.Printf("seeded %s from %s: +%s inputs, %s already present\n",
-			c.Name, *seedFrom, comma(copied), comma(skipped))
+			c.Name, *seedFrom, comma(res.Copied), comma(res.Present))
+		if res.Failed > 0 {
+			// NOT SUCCESS. These were counted as "already present" and the
+			// command exited 0, so a half-readable source seeded half a
+			// corpus and said it had worked.
+			fmt.Fprintf(os.Stderr,
+				"pgfuzz: %s input(s) could not be copied -- first: %v\n",
+				comma(res.Failed), res.FirstErr)
+			return 1
+		}
 		return 0
 	}
 
