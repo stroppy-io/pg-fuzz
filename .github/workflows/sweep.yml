@@ -175,15 +175,23 @@ jobs:
           # on 18+ with 'StatementTimeout' and 'MyProc' undeclared, and v2.0.3
           # supports 14 through 19. That bump is in plugins.tsv, where it
           # benefits every workspace rather than only this one.
+          #
+          # AND pg_background DOES NOT BUILD ON MASTER AT ALL. 2.0 carries an
+          # explicit refusal -- #error "pg_background 2.0 supports PostgreSQL
+          # 14-19 only" -- and master is 20devel. That is upstream's statement
+          # about itself, not a pin we can choose better: no released version
+          # supports 20. It comes out on master and stays everywhere else, so
+          # master still sweeps with pgaudit and pgsql-http rather than not
+          # sweeping at all.
           case "${{ matrix.ref }}" in
-              REL_16_STABLE) audit=16.1     ;;
-              REL_17_STABLE) audit=17.1     ;;
-              REL_18_STABLE) audit=18.0     ;;
-              REL_19_STABLE) audit=19beta3  ;;
-              master)        audit=main     ;;
+              REL_16_STABLE) audit=16.1    ; bg=" pg_background" ;;
+              REL_17_STABLE) audit=17.1    ; bg=" pg_background" ;;
+              REL_18_STABLE) audit=18.0    ; bg=" pg_background" ;;
+              REL_19_STABLE) audit=19beta3 ; bg=" pg_background" ;;
+              master)        audit=main    ; bg=""               ;;
               *) echo "no pgaudit version is mapped for ${{ matrix.ref }}" >&2; exit 1 ;;
           esac
-          echo "plugins=pgaudit@$audit pg_background pgsql-http" >> "$conf"
+          echo "plugins=pgaudit@$audit$bg pgsql-http" >> "$conf"
           cat "$conf"
 
       # NO SEPARATE BUILD STEP.

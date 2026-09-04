@@ -39,3 +39,35 @@ func TestHasStackFixRefusesGarbage(t *testing.T) {
 		}
 	}
 }
+
+// PRE-RELEASE VERSION STRINGS. PostgreSQL writes 18.6, but also 19beta3,
+// 19rc1 and 20devel. The old parse fed all of "19beta3" to Atoi, which fails,
+// so it answered "no fix" for a tree that has it -- and REL_19_STABLE's
+// address builds were refused on a check that was right about the requirement
+// and wrong about the version.
+func TestHasStackFixVersionStrings(t *testing.T) {
+	for _, c := range []struct {
+		version string
+		want    bool
+		why     string
+	}{
+		{"19beta3", true, "19 branched after the fix landed in master"},
+		{"19rc1", true, "same branch, later pre-release"},
+		{"19.0", true, "and its release"},
+		{"20devel", true, "master is newer still"},
+		{"18.6", true, "the first 18 to carry it"},
+		{"18.5", false, "one minor before"},
+		{"18beta1", false, "a pre-release of 18 predates 18.6"},
+		{"17.11", true, "the first 17 to carry it"},
+		{"17.10", false, "one minor before"},
+		{"16.15", true, "the first 16 to carry it"},
+		{"16.14", false, "one minor before"},
+		{"15.20", false, "15 never got it; needs a patch= entry"},
+		{"", false, "no version is not a version with the fix"},
+		{"garbage", false, "nor is nonsense"},
+	} {
+		if got := hasStackFix(c.version); got != c.want {
+			t.Errorf("hasStackFix(%q) = %v, want %v -- %s", c.version, got, c.want, c.why)
+		}
+	}
+}

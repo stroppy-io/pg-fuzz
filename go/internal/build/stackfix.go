@@ -109,27 +109,52 @@ var reACInit = regexp.MustCompile(`AC_INIT\(\[PostgreSQL\], \[([^\]]+)\]`)
 // major and therefore has it.
 func hasStackFix(version string) bool {
 	firstWith := map[int]int{16: 15, 17: 11, 18: 6}
-	parts := strings.SplitN(version, ".", 2)
-	major, err := strconv.Atoi(strings.TrimSuffix(parts[0], "devel"))
-	if err != nil {
+
+	// A VERSION IS NOT ALWAYS "MAJOR.MINOR". PostgreSQL writes 18.6, but also
+	// 19beta3, 19rc1 and 20devel -- and the old parse handed the whole of
+	// "19beta3" to Atoi, which fails, so the function answered "no fix" for a
+	// tree that has it. REL_19_STABLE address builds were refused on exactly
+	// that: the check named a real requirement and got the version wrong, so
+	// it read as upstream's problem rather than ours.
+	major, rest := splitMajor(version)
+	if major == 0 {
 		return false
-	}
-	if strings.HasSuffix(parts[0], "devel") {
-		return true
 	}
 	need, known := firstWith[major]
 	if !known {
-		// Majors after the ones listed shipped with it; earlier ones need a
-		// patch= entry, which the caller has already checked for.
+		// 19 and later branched after the fix landed in master (backpatched
+		// 2026-05-28), so they carry it from their first beta. Majors before
+		// 16 need a patch= entry, which the caller has already checked for.
 		return major > 18
 	}
-	if len(parts) < 2 {
+	// A listed major has it only from a specific MINOR, so a pre-release of
+	// that major -- 16beta1, 17rc1, an 18devel branch -- is by definition
+	// before it. Only a dotted minor can clear the bar.
+	if !strings.HasPrefix(rest, ".") {
 		return false
 	}
-	minor, err := strconv.Atoi(strings.SplitN(parts[1], "devel", 2)[0])
+	minor, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(rest, "."), "devel", 2)[0])
 	if err != nil {
-		// "17devel" style: a development branch of that major, past release.
-		return strings.Contains(version, "devel")
+		return false
 	}
 	return minor >= need
+}
+
+// splitMajor takes the leading integer of a PostgreSQL version string and
+// returns it with whatever followed: "18.6" -> 18, ".6"; "19beta3" -> 19,
+// "beta3"; "20devel" -> 20, "devel". A string with no leading digits gives 0,
+// which every caller must treat as unknown rather than as a version.
+func splitMajor(v string) (int, string) {
+	i := 0
+	for i < len(v) && v[i] >= '0' && v[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, v
+	}
+	n, err := strconv.Atoi(v[:i])
+	if err != nil {
+		return 0, v
+	}
+	return n, v[i:]
 }
