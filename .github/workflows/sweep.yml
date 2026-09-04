@@ -114,10 +114,29 @@ jobs:
       - name: roots
         run: |
           # The four roots, all under the runner's own disk.
+          #
+          # PGFUZZ_ACT_ROOT overrides the base, and exists for ONE reason:
+          # running this workflow locally under act. The oss-fuzz build runs
+          # on the HOST docker daemon, so it mounts host paths -- while act's
+          # $RUNNER_TEMP lives inside act's own container and is invisible
+          # there. The builder then mounts an empty directory, build.sh finds
+          # no .pgfuzz-ref, and the failure looks like a bad export.
+          #
+          # Pointing both at one bind-mounted path makes the whole pipeline
+          # runnable here. On a real runner the variable is unset and this is
+          # $RUNNER_TEMP, exactly as before.
+          base="${PGFUZZ_ACT_ROOT:-$RUNNER_TEMP}"
           echo "PGFUZZ_HOME=$GITHUB_WORKSPACE"       >> "$GITHUB_ENV"
-          echo "PGFUZZ_WS=$RUNNER_TEMP/ws"           >> "$GITHUB_ENV"
-          echo "PGFUZZ_CACHE=$RUNNER_TEMP/cache"     >> "$GITHUB_ENV"
-          echo "WS=ci-${{ matrix.ref }}-${{ matrix.sanitizer }}" >> "$GITHUB_ENV"
+          echo "PGFUZZ_WS=$base/ws"                  >> "$GITHUB_ENV"
+          echo "PGFUZZ_CACHE=$base/cache"            >> "$GITHUB_ENV"
+          # LOWERCASE, because the workspace name becomes a docker image tag
+          # and a repository name must be lowercase. REL_16_STABLE does not,
+          # so every item died at `docker build -t
+          # gcr.io/oss-fuzz/pgfuzz-ci-REL_16_STABLE-address` with "repository
+          # name must be lowercase" -- a docker USAGE error, which is why the
+          # message was "Run 'docker build --help'" rather than a build log.
+          ws="ci-${{ matrix.ref }}-${{ matrix.sanitizer }}"
+          echo "WS=$(printf '%s' "$ws" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: clone the substrate
         run: |

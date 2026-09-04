@@ -2844,6 +2844,20 @@ func cmdWS(argv []string) int {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %s already exists\n", dir)
 			return 2
 		}
+		// A WORKSPACE NAME BECOMES A DOCKER TAG.
+		//
+		// The project is "pgfuzz-<name>" and helper.py builds
+		// gcr.io/oss-fuzz/<project>, so an uppercase letter here fails twenty
+		// minutes later as `invalid tag ...: repository name must be
+		// lowercase` -- a docker USAGE error, reported as "Run 'docker build
+		// --help'", which says nothing about the workspace that caused it.
+		//
+		// Refused at creation, where the name can still be changed, and by
+		// name rather than by a rule the reader has to infer.
+		if bad := badWorkspaceName(*newName); bad != "" {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %s\n", bad)
+			return 2
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 			return 2
@@ -4822,6 +4836,33 @@ func scopeOf(txt string, pats []string, knownWS map[string]bool) ([]string, bool
 }
 
 // matchesAny reports whether a name matches any of the globs.
+// badWorkspaceName says why a name cannot be used, or "".
+//
+// The constraint is docker's: a repository name is lowercase letters, digits,
+// and separators. The workspace name is carried into one, so it inherits that.
+func badWorkspaceName(name string) string {
+	if name == "" {
+		return "a workspace needs a name"
+	}
+	if name != strings.ToLower(name) {
+		return fmt.Sprintf(
+			"workspace %q has uppercase letters, and the name becomes a docker\n"+
+				"  image tag (gcr.io/oss-fuzz/pgfuzz-%s) -- a repository name must be\n"+
+				"  lowercase. Try %q.", name, name, strings.ToLower(name))
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return fmt.Sprintf(
+				"workspace %q contains %q, which a docker repository name may not\n"+
+					"  carry -- the name becomes gcr.io/oss-fuzz/pgfuzz-%s.",
+				name, string(r), name)
+		}
+	}
+	return ""
+}
+
 func matchesAny(name string, pats []string) bool {
 	for _, p := range pats {
 		if ok, _ := filepath.Match(p, name); ok {

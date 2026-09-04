@@ -118,32 +118,42 @@ job_sweep() {
 	fi
 	# One matrix item is enough to exercise the scaffolding; ten would only
 	# repeat it. The docker socket is mounted so the build can at least start.
+	# A PATH BOTH SIDES CAN SEE.
+	#
+	# The oss-fuzz build runs on the HOST daemon, so it mounts host paths --
+	# while act's $RUNNER_TEMP is inside act's own container. Without this the
+	# builder mounts an empty directory, build.sh finds no .pgfuzz-ref, and it
+	# reads as a broken export rather than as two filesystems.
+	local root=/tmp/pgfuzz-act
+	rm -rf "$root"; mkdir -p "$root"
+
 	local log
 	log=$(mktemp)
 	"$act" -j sweep -W .github/workflows/sweep.yml \
 		--matrix ref:REL_17_STABLE --matrix sanitizer:address \
-		--container-daemon-socket /var/run/docker.sock >"$log" 2>&1
+		--container-daemon-socket /var/run/docker.sock \
+		--container-options "-v $root:$root" \
+		--env "PGFUZZ_ACT_ROOT=$root" >"$log" 2>&1
 	local rc=$?
 
-	# WHERE act ACTUALLY STOPS, which is much later than I assumed and is worth
-	# stating precisely so this job does not become noise people ignore.
+	# NO EXCUSE FOR THE IMAGE BUILD.
 	#
-	# The oss-fuzz image build runs against the HOST daemon through the mounted
-	# socket, so the build context paths inside act's container do not exist
-	# for it. That failure is an artifact of running here, not a defect.
+	# The first version of this treated "image build failed" as act's own
+	# limit -- the host daemon not seeing the container's paths -- and reported
+	# ok. That was wrong twice over: the failure was a real defect (an
+	# uppercase docker tag, which a repository name may not have), and the
+	# excuse would have hidden precisely the bug this job exists to find. A
+	# check that swallows a class of failure is worse than no check, because
+	# it also tells you that you looked.
 	#
-	# Everything before it is real: checkout, the disk reclaim, setup-go,
-	# building pgfuzz, the roots, the shallow clone and its pin, creating the
-	# workspace, exporting the tree, applying the patch series, exporting the
-	# plugins, and every history-reading refusal along the way. All five
-	# defects this job was written for were in that range.
+	# If act cannot build the image for environmental reasons, that will show
+	# as a distinguishable error and can be excused THEN, by name.
 	if [ $rc -eq 0 ]; then
 		ok "the sweep workflow ran to completion"
-	elif grep -q 'image build failed' "$log"; then
-		ok "the scaffolding ran; stopped at the oss-fuzz image build (act's limit, not a defect)"
 	else
-		bad "the sweep workflow failed before the image build -- $log"
-		grep -aE '❌|FAIL|pgfuzz: ' "$log" | tail -12
+		bad "the sweep workflow failed under act -- $log"
+		grep -aE '❌|FAIL|pgfuzz: |ERROR' "$log" | tail -12
+		return
 	fi
 	rm -f "$log"
 }
