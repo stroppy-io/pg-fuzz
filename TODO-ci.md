@@ -62,20 +62,24 @@ never been run is itself an unproven script.
       encode one fact from opposite sides. An escape hatch that manufactures
       the failure it avoids is the dead surface this audit spent two days
       deleting, so it is gone and the budgets stay on.
-- [ ] **`.github/workflows/sweep.yml` — executing, not yet green.** It has now
-      run on GitHub (all ten items red) and locally under `act`.
+- [x] **`.github/workflows/sweep.yml` — GREEN, 10 of 10**, run 33899248721 on
+      2026-09-04. pg16 through 19 and master, address and undefined, each with
+      the CI marker patch and plugins, every item producing a 4+ MB record.
 
       **"`act` cannot run this" was wrong, and it was mine.** The line that
       stood here — "the oss-fuzz build needs docker inside the runner
       container" — was written without trying it. act mounts the host docker
-      socket, so the build runs on the HOST daemon and works. Two real
-      adjustments were needed, both of the same shape: anything the build
-      container mounts must exist for the daemon that starts it, and act's
-      `$RUNNER_TEMP` and `$HOME` do not. `PGFUZZ_ACT_ROOT` points the roots and
-      the binary at one shared path; it is unset on a real runner.
+      socket, so the build runs on the HOST daemon and works. Two adjustments
+      were needed, both the same shape: anything the build container mounts has
+      to exist for the daemon that starts it, and act's `$RUNNER_TEMP` and
+      `$HOME` do not. `PGFUZZ_ACT_ROOT` points the roots and the binary at one
+      shared path; it is unset on a real runner. The whole pipeline now runs
+      here, including both artifact uploads, via `act --artifact-server-path`
+      rather than an exemption.
 
-      Six defects have been found by running it, every one of them mine and
-      none visible without a run:
+      Eleven defects were found by running it, every one mine, none visible
+      without a run. The scaffolding ones:
+
       1. `reclaim disk` deleted `$AGENT_TOOLSDIRECTORY`, where setup-go had
          just installed Go — exit 127.
       2. `$HOME/.local/bin` did not exist and was not on `PATH`.
@@ -83,11 +87,57 @@ never been run is itself an unproven script.
       4. A duplicate build without `-no-pin`.
       5. **An uppercase docker tag.** A workspace name becomes a docker
          repository name, and `ci-REL_17_STABLE-address` is not lowercase.
-         This alone killed all ten items on GitHub.
-      6. **The workspace wipe could not wipe.** Container-written files are
-         root-owned, so `rm -rf` left a workspace behind and nothing checked.
-         A surviving build satisfying a later check is a false green, which is
-         the one failure this job exists to prevent.
+         This alone killed all ten items.
+      6. **The wipe could not wipe.** Container-written files are root-owned,
+         `rm -rf` left a workspace behind, and nothing checked. A surviving
+         build satisfying a later check is a false green — the one thing this
+         job exists to prevent.
+      7. **Every upload glob named the unsealed layout** while a sealed
+         campaign writes under `campaigns/ci/ws/<ws>/`, so a sweep that
+         CRASHED would have uploaded no reproducer and stayed green.
+      8. **`run-*.log` missed `run-*.log.gz`** — five of 23 targets silently
+         absent from the record, upload green regardless.
+
+      And four that were tool defects, not CI ones:
+
+      9. **census could not see a sealed campaign.** 15 signatures from 46 logs
+         were invisible on this host's real grande-teste campaign, and every
+         sealed bundle wrote "census: no logs to scan" into its manifest.
+      10. **The accept-list scope matched nothing.** `tm2timestamp` is scoped
+          `pg16*,pg17*,oriole*` and CI workspaces are `ci-rel_16_stable-*`, so
+          an ACCEPTED site read as out of scope and every undefined item failed
+          on the row meant to excuse it. `matchGlob` also only handled a
+          trailing star, so no scope could name a sanitizer.
+      11. **`hasStackFix` fed "19beta3" to Atoi**, answered "no fix" for a tree
+          that has it, and refused every REL_19 address build under a message
+          that blamed upstream's commit for our parse.
+
+      Plus two upstream facts, neither a defect here: pg_background v1.5 does
+      not build on 18+ (v2.0.3 does, 14 through 19) and pg_background 2.0
+      refuses PG 20 outright, so master sweeps without it; and pgaudit is
+      versioned BY PostgreSQL major, so the sweep names 16.1/17.1/18.0/
+      19beta3/main per ref.
+
+- [x] **The sweep goes red for the HARNESS, not for findings.** A UB site is
+      the fuzzer working, and failing the round on it makes a board nobody
+      reads — at which point the starvation gate, whose whole job is to notice
+      the harness silently doing no work, arrives unseen. `gate.Verdict` now
+      says what a failure is About: starvation, slow-units, final-stats and
+      round-complete are Harness; ubsan and ubsan-withdrawal are Finding.
+      `pgfuzz gate` exits 1 for the first and 3 for the second, `smoke.sh`
+      accepts 3. Nothing is muted: both are printed, both recorded, and the
+      report ships them. Verified in the green run — the record reads
+      `"gate":"finding","detail":"the fuzzer found something; the harness
+      passed every gate"`.
+
+- [x] **The harness is asserted to still SEE**, which nothing here did before.
+      `pgfuzz expect` against `project/ci-findings.tsv`: 7 sites, each observed
+      in BOTH 16 and 17 at 30s a target with near-identical counts, asserted
+      as `found` (innermost frame of a UB report) AND `reported` (the census
+      made a signature naming the file). It is the one check that fails on
+      silence. Proven both ways: 7/7 on the real artifacts, 7/7 MISSED when
+      the same logs are replayed with the UB reports stripped.
+
 - [ ] **The disk arithmetic is from this host, not a runner.** ~8.5 GB per item
       against ~14 GB is measured locally (base-builder 3.15 GB, project layers
       ~0.3, shallow clone ~250 MB, export ~2.6 GB, address build 1.5 GB). It
@@ -193,8 +243,17 @@ never been run is itself an unproven script.
 - [ ] **Decide whether `pgfuzz regress` belongs in CI.** It builds a whole
       second PostgreSQL and runs `make check` — verified working here, 225
       tests passing, but ~40 minutes. Probably one item, not ten.
-- [ ] **Cadence.** Currently push-to-main plus manual. Nightly later, as part
-      of something bigger.
+- [ ] **Cadence — YOUR CALL, and deliberately not taken.** The sweep is
+      `workflow_dispatch` only. It is now green, which was the condition for
+      giving it a push trigger, but ten items at ~25 minutes on every push to
+      main is a real bill and the campaign config is moving to its own repo
+      anyway. Options: leave it manual, add push-to-main, or nightly.
+
+- [ ] **GitHub truncates the smoke step log.** `build.sh` runs under `set -x`
+      and floods it, so a failing item cannot be diagnosed from the web log at
+      all — every diagnosis in this file came from the uploaded artifacts
+      instead. That is why the record upload mattered more than it looked, and
+      it is still worth quietening the trace.
 
 ## Deliberately not in CI
 
