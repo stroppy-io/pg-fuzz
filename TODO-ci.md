@@ -36,7 +36,9 @@ never been run is itself an unproven script.
 
 ## Written but NOT yet proven
 
-- [ ] **`scripts/smoke.sh` green.** Four runs so far, each finding something
+- [x] **`scripts/smoke.sh` GREEN**, on the fifth run: campaign, gates, report,
+      index, bundle, census, inventory, breakdown, all ok, in about 25 minutes
+      against vfy-pg17 at 8s a target. Five runs, each finding something
       real, and every failure was the tool being correct:
       - a wrong flag of mine (`-o` for `-out`);
       - the PG pin refusing a moved branch — right for a campaign, noise for a
@@ -51,7 +53,8 @@ never been run is itself an unproven script.
         killed a flag I had just added (see below);
       - `round-complete` firing because a 7-minute campaign cannot finish a
         23-target round, so the clock went to 0.35h for two complete rounds.
-      Fifth run in progress.
+      That is six corrections to one script’s expectations, and every failure
+      was the tool being right.
 
       **A flag removed, not kept.** I added `-no-budgets` to skip the 150s and
       200s floors on the two slow targets. Skipping them *creates* the
