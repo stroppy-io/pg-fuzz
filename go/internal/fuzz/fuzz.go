@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"pgfuzz/internal/corpus"
 	"pgfuzz/internal/logs"
 	"strconv"
 	"strings"
@@ -195,11 +196,11 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	if data == "" {
 		data = r.Workspace
 	}
-	corpus := filepath.Join(data, "corpus", r.Target)
+	corpusDir := filepath.Join(data, "corpus", r.Target)
 	arts := filepath.Join(data, "artifacts", r.Target)
 	lineage := filepath.Join(data, "lineage")
 	rundir := filepath.Join(data, "runtmp", r.Target)
-	for _, d := range []string{corpus, arts, lineage,
+	for _, d := range []string{corpusDir, arts, lineage,
 		filepath.Join(rundir, "upper"), filepath.Join(rundir, "work")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return Result{}, err
@@ -212,7 +213,7 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	os.MkdirAll(filepath.Join(rundir, "upper"), 0o755)
 	os.MkdirAll(filepath.Join(rundir, "work"), 0o755)
 
-	before := countFiles(corpus)
+	before := countFiles(corpusDir)
 	artsBefore := countArtifacts(arts)
 	stamp := time.Now().Format("20060102-150405")
 	logPath := filepath.Join(arts, "run-"+stamp+".log")
@@ -236,7 +237,7 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		// The container runs as root; without this it leaves the lineage TSVs
 		// and the run scratch root-owned on the host.
 		"-e", fmt.Sprintf("PGFUZZ_UID=%d:%d", os.Getuid(), os.Getgid()),
-		"-v", corpus + ":/tmp/" + r.Target + "_corpus",
+		"-v", corpusDir + ":/tmp/" + r.Target + "_corpus",
 		"-v", lineage + ":/lineage",
 		"-v", r.OutDir + ":/out-lower:ro",
 		"-v", rundir + ":/run-ovl",
@@ -266,6 +267,24 @@ func Run(ctx context.Context, r Request) (Result, error) {
 	var sink io.Writer = lf
 	if r.Stream != nil {
 		sink = io.MultiWriter(lf, r.Stream)
+	}
+
+	// REPAIR THE CORPUS BEFORE THE SLICE, not only after it.
+	//
+	// The postmaster-backed targets run PostgreSQL, which calls umask(077),
+	// so every entry those targets write is mode 600 owned by the container's
+	// user. The in-container hand-back covers the happy path -- and SIGKILL
+	// cannot be trapped, so a campaign stopped mid-slice leaves them behind
+	// and nothing heals them until somebody types `corpus -repair`. Host-side
+	// readers then see a fraction of the corpus and report it as the whole.
+	//
+	// corpus.Measure is free when there is nothing to fix, which is what makes
+	// this affordable per slice; the package's own doc has always said it
+	// happens before a run as well as after.
+	if n, err := corpus.Repair(corpusDir); err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: could not repair %s: %v\n", corpusDir, err)
+	} else if n > 0 {
+		fmt.Fprintf(os.Stderr, "pgfuzz: repaired %d unreadable corpus entries before the slice\n", n)
 	}
 
 	// THE HARD DEADLINE, and the disk floor, share one guard.
@@ -330,7 +349,7 @@ func Run(ctx context.Context, r Request) (Result, error) {
 		Elapsed:    time.Since(start),
 		LogPath:    logPath,
 		CorpusFrom: before,
-		CorpusTo:   countFiles(corpus),
+		CorpusTo:   countFiles(corpusDir),
 		DiskStop:   diskStopped.Load(),
 		Hung:       hung.Load(),
 	}
