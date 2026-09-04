@@ -118,13 +118,34 @@ job_sweep() {
 	fi
 	# One matrix item is enough to exercise the scaffolding; ten would only
 	# repeat it. The docker socket is mounted so the build can at least start.
-	if "$act" -j sweep -W .github/workflows/sweep.yml \
+	local log
+	log=$(mktemp)
+	"$act" -j sweep -W .github/workflows/sweep.yml \
 		--matrix ref:REL_17_STABLE --matrix sanitizer:address \
-		--container-daemon-socket /var/run/docker.sock; then
-		ok "the sweep workflow ran"
+		--container-daemon-socket /var/run/docker.sock >"$log" 2>&1
+	local rc=$?
+
+	# WHERE act ACTUALLY STOPS, which is much later than I assumed and is worth
+	# stating precisely so this job does not become noise people ignore.
+	#
+	# The oss-fuzz image build runs against the HOST daemon through the mounted
+	# socket, so the build context paths inside act's container do not exist
+	# for it. That failure is an artifact of running here, not a defect.
+	#
+	# Everything before it is real: checkout, the disk reclaim, setup-go,
+	# building pgfuzz, the roots, the shallow clone and its pin, creating the
+	# workspace, exporting the tree, applying the patch series, exporting the
+	# plugins, and every history-reading refusal along the way. All five
+	# defects this job was written for were in that range.
+	if [ $rc -eq 0 ]; then
+		ok "the sweep workflow ran to completion"
+	elif grep -q 'image build failed' "$log"; then
+		ok "the scaffolding ran; stopped at the oss-fuzz image build (act's limit, not a defect)"
 	else
-		bad "the sweep workflow failed under act"
+		bad "the sweep workflow failed before the image build -- $log"
+		grep -aE '❌|FAIL|pgfuzz: ' "$log" | tail -12
 	fi
+	rm -f "$log"
 }
 
 # The harnesses are C compiled inside OSS-Fuzz's image, which this does not
