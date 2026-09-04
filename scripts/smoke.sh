@@ -90,21 +90,74 @@ step() {
 # which is precisely what those floors are for. The budget and the gate encode
 # one fact from opposite sides, and a smoke run that disables half of it is
 # not exercising the real code path.
-step "campaign" pgfuzz campaign -slug "$SLUG" -sealed -w "$WS" -no-pin \
-	-hours "${HOURS:-0.35}" -time "$SECS" -jobs 2 -on-deadline cut -profile smoke
-
 # THE DASHBOARD, on the front page of the run.
 #
-# WHAT THE STEP LOG IS FOR. Everything verbose is folded into a ::group:: or
-# written to a file that gets uploaded -- build.log, the per-target run logs,
-# the report, the bundle. What is left on the page unfolded is this: the same
-# grid `pgfuzz tui` draws on a terminal, as one frame. Opening a run should
-# show the state of the campaign, not six thousand lines of make.
+# WHAT THE STEP LOG IS FOR. Everything verbose goes to a file that gets
+# uploaded -- build.log, campaign.log, the per-target run logs, the report, the
+# bundle -- or is folded into a ::group::. What is left on the page is the grid
+# `pgfuzz tui` draws on a terminal. Opening a run should show the state of the
+# campaign, not six thousand lines of make.
 #
-# One frame after the campaign, so the page shows what was built and swept
-# before the verdicts start arriving. It is a snapshot, so it carries no
-# keybindings; a reader of a log cannot press anything.
+# It is a snapshot, so it carries no keybindings and no selected row; a reader
+# of a log cannot press anything, and a highlight would claim a state that does
+# not exist.
 frame() { printf '\n'; pgfuzz tui -slug "$SLUG" || :; }
+
+# A FRAME WHILE IT RUNS, not only when it is over.
+#
+# The first version printed one frame AFTER the campaign, which meant that for
+# the twenty minutes the campaign actually takes -- almost the whole run -- the
+# page showed the campaign's own per-target chatter and became a dashboard only
+# once there was nothing left to watch. That is the opposite of the point.
+#
+# So the campaign's output goes to a file and the page gets a frame every
+# minute: what is building, what is fuzzing right now, how many slices have
+# landed. The log is uploaded with the record, so nothing is lost -- it is
+# moved.
+#
+# NOT INSIDE A GROUP, deliberately. The frames are the thing somebody opens the
+# run to see, and folding them would hide exactly what this exists to show.
+campaign_watched() {
+	local log=$1; shift
+	"$@" >"$log" 2>&1 &
+	local pid=$!
+	# A frame a minute is ~20 over a smoke campaign: enough to watch progress,
+	# few enough to scroll.
+	#
+	# POLLED SHORT, DRAWN SLOW. Sleeping the whole interval and then checking
+	# would add up to a minute of doing nothing to every run that finished
+	# early -- including a build that failed in ten seconds, which would sit
+	# there looking like work.
+	local interval=${PGFUZZ_FRAME_SECS:-60} waited=0
+	while kill -0 "$pid" 2>/dev/null; do
+		sleep 2
+		waited=$((waited + 2))
+		if [ "$waited" -ge "$interval" ]; then
+			waited=0
+			kill -0 "$pid" 2>/dev/null && frame
+		fi
+	done
+	# The campaign's own exit code, not the loop's -- `wait` reports it, and
+	# without this a failed campaign would look like a successful sleep.
+	wait "$pid"
+}
+
+# UNGROUPED, because its output IS the dashboard. Everything else this script
+# runs is folded; this is what the fold exists to make room for.
+CAMPAIGN_LOG="$OUT/campaign.log"
+mkdir -p "$OUT"
+printf '\n\033[1m== %s\033[0m\n' "campaign"
+if campaign_watched "$CAMPAIGN_LOG" \
+	pgfuzz campaign -slug "$SLUG" -sealed -w "$WS" -no-pin \
+	-hours "${HOURS:-0.35}" -time "$SECS" -jobs 2 -on-deadline cut -profile smoke
+then
+	printf '   \033[32mok\033[0m   %s\n' "campaign"
+else
+	printf '   \033[31mFAIL\033[0m %s\n' "campaign"; FAILED+=("campaign")
+	# The reason, on the page, without making anybody download an artifact to
+	# learn that the build failed.
+	group_open "campaign.log (tail)"; tail -40 "$CAMPAIGN_LOG" || :; group_close
+fi
 frame
 
 # THE GATES, over the campaign's OWN logs. -logs is the flag that was missing
