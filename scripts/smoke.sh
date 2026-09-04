@@ -132,6 +132,41 @@ frame_folded() {
 	group_close
 }
 
+# THE RUN SUMMARY PAGE, which is where a dashboard actually belongs.
+#
+# The log was the wrong home all along. It is append-only with no cursor, so a
+# dashboard in it is a stack of copies and the newest is wherever the scrollbar
+# is. $GITHUB_STEP_SUMMARY is a PAGE: GitHub Flavored Markdown rendered at the
+# top of the run, and writing it with `>` REPLACES what was there -- which is
+# the in-place update a log cannot give.
+#
+# So: the log keeps the folded timeline, for watching progress while it runs,
+# and the summary carries the finished state. Same information, in the medium
+# that fits it.
+#
+# The grid goes in a fenced block with its colour stripped -- markdown is not a
+# terminal, escape codes are literal there, and a monospace block is what keeps
+# 23 columns lined up. The report goes in whole, because `pgfuzz report -md`
+# already emits GFM: what was tested, what the run did, and what it found.
+#
+# 1 MiB is the per-step cap. The grid is about 2 KB and the report about 3 KB,
+# so this is nowhere near it -- but it is written with `>` rather than `>>`
+# for a second reason besides replacement: an appending summary across a
+# retried step would grow without bound.
+summarise() {
+	[ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+	{
+		printf '## %s\n\n' "$WS"
+		printf '```\n'
+		pgfuzz tui -slug "$SLUG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || :
+		printf '```\n\n'
+		if [ -f "$OUT/report.md" ]; then
+			# The report's own H1 would compete with the job summary's heading.
+			sed '1s/^# /## /' "$OUT/report.md"
+		fi
+	} > "$GITHUB_STEP_SUMMARY"
+}
+
 # A FRAME WHILE IT RUNS, not only when it is over.
 #
 # The first version printed one frame AFTER the campaign, which meant that for
@@ -188,6 +223,11 @@ else
 	group_open "campaign.log (tail)"; tail -40 "$CAMPAIGN_LOG" || :; group_close
 fi
 frame
+# EARLY, so a run that dies in a later step still leaves a dashboard on the
+# page rather than an empty summary. It is rewritten at the end with the
+# report attached; `>` means the second write replaces this one rather than
+# stacking a second copy under it.
+summarise
 
 # THE GATES, over the campaign's OWN logs. -logs is the flag that was missing
 # for the whole of this port's life: a sealed campaign writes under the slug,
@@ -261,6 +301,9 @@ step "breakdown" bash -c 'pgfuzz breakdown -w "$0" || [ $? -eq 2 ]' "$WS"
 # campaign built; this shows where it finished, and it is the thing somebody
 # scrolling to the bottom of a green run should find.
 frame
+
+# AND THE SUMMARY PAGE, last, so it carries the report as well as the grid.
+summarise
 
 echo
 if [ ${#FAILED[@]} -eq 0 ]; then
