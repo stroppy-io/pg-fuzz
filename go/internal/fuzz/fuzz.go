@@ -110,7 +110,11 @@ type Result struct {
 	// caller could not say which was which, so anything reported per-target
 	// had to be inferred from position -- which stops being true the moment a
 	// target is skipped.
-	Target     string
+	Target string
+	// Err is why this slice did not run, or nil. A sweep records the failure
+	// and carries on; the caller needs to be able to tell a target that
+	// produced nothing from one that never started.
+	Err        error
 	Elapsed    time.Duration
 	LogPath    string
 	CorpusFrom int
@@ -471,7 +475,26 @@ func Sweep(ctx context.Context, sr SweepRequest) ([]Result, error) {
 		}
 		res, err := Run(ctx, req)
 		if err != nil {
-			return out, fmt.Errorf("%s: %w", t, err)
+			// A FAILURE IN ONE TARGET MUST NEVER END THE SWEEP.
+			//
+			// This returned, so a failed os.Create of one log, or one binary
+			// that lost its exec bit, cost every remaining target its round --
+			// and cmdSweep then returned 2 without printing the summary for
+			// the targets that HAD run. The shell ran each target in a
+			// subshell and recorded "FAILED TO RUN" as one line in the
+			// results.
+			//
+			// A cancelled context is different and still stops everything:
+			// that is the operator, not the target.
+			if ctx.Err() != nil {
+				return out, ctx.Err()
+			}
+			res.Target, res.Err = t, err
+			out = append(out, res)
+			if sr.OnDone != nil {
+				sr.OnDone(t, res)
+			}
+			continue
 		}
 		if sr.OnDone != nil {
 			sr.OnDone(t, res)

@@ -170,7 +170,17 @@ func Run(ctx context.Context, c Config) error {
 					// for first: "one more" means one more, not one more
 					// alongside whatever is still going.
 					wg.Wait()
-					runOne(ctx, c, e, round, say, time.Time{})
+					// CLAMPED TO THE HARD STOP, not unbounded.
+					//
+					// This passed a zero deadline, so "one more workspace at
+					// full length" meant PerTarget x targets plus a per-slice
+					// HangGrace with nothing above it -- and -max-overrun,
+					// which exists to bound the campaign's wall clock, did not
+					// apply in the one policy that most needs bounding. The
+					// shell clamped the extra sweep to HARD_STOP - now for
+					// exactly this reason: the ceiling holds even when the
+					// policy says keep going.
+					runOne(ctx, c, e, round, say, hardStop)
 					return nil
 				}
 			}
@@ -237,6 +247,16 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 	// applied, and any disagreement between the two silently filed every row
 	// under the wrong name. OnDone is handed the target.
 	record := func(t string, r fuzz.Result) {
+		// A SLICE THAT NEVER RAN WRITES NO ROW.
+		//
+		// Sweep now reports failures instead of abandoning the round, so this
+		// is reached for a target that never started. Recording it would put
+		// execs 0, corpus 0, alive false into the series as a MEASUREMENT --
+		// and a ratchet reading that sees a target that collapsed, not one
+		// whose container failed to start.
+		if r.Err != nil {
+			return
+		}
 		st, _ := logs.ParseFile(r.LogPath)
 		// The trajectory, from the same log. Without it a slice records what
 		// it reached and nothing about whether it moved -- and "cov 6156" is
@@ -303,12 +323,23 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 	if err != nil {
 		say("  %s: %v", e.Name, err)
 	}
-	complete := len(res) >= len(e.Targets)
+	// A RESULT THAT FAILED TO RUN IS NOT A SWEPT TARGET. Sweep now records
+	// failures instead of abandoning the round, so completeness has to count
+	// what actually ran rather than how many rows came back.
+	ran := 0
+	for _, r := range res {
+		if r.Err == nil {
+			ran++
+		} else {
+			say("  %s: %v", r.Target, r.Err)
+		}
+	}
+	complete := ran >= len(e.Targets)
 	if !complete {
 		// Recorded as a fact, not left to be inferred from a log: a round that
 		// ran 20 of 23 writes 20 healthy results and passes every gate that
 		// judges only what it was handed.
-		say("  SHORT ROUND: %d of %d targets never ran", len(e.Targets)-len(res), len(e.Targets))
+		say("  SHORT ROUND: %d of %d targets never ran", len(e.Targets)-ran, len(e.Targets))
 	}
 	// A COMPLETE ROUND CAN STILL BE UNJUDGEABLE. Every target ran, so nothing
 	// above notices, while one of them was stopped part-way by the disk floor
