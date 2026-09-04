@@ -1503,7 +1503,7 @@ func cmdCampaign(argv []string) int {
 		// judged, so nothing can ever regress. Without a caller the ratchet was
 		// a gate nobody ran.
 		AfterSweep: func(e campaign.Entry, round int, complete bool, notJudgeable string) {
-			gateAfterSweep(r, e, round, *jobs, notJudgeable, *profile)
+			gateAfterSweep(r, e, round, *jobs, notJudgeable, *profile, slugDir)
 		},
 	})
 	if err != nil {
@@ -3376,6 +3376,8 @@ func cmdBundle(argv []string) int {
 			"coverage split by component"},
 		{"campaign-stopped.marker", finalreport.MarkerPath(r.WS),
 			"when the run stopped, and each corpus size at that moment"},
+		{"gate-failures.jsonl", filepath.Join(campDir, "gate-failures.jsonl"),
+			"every per-round gate verdict this campaign failed or skipped"},
 	} {
 		if err := bundle.CopyInto(stage, doc.name, doc.path); err != nil {
 			m.Add(doc.name, false, "not shipped: "+err.Error())
@@ -5513,9 +5515,19 @@ func loadBudgets(r paths.Roots) fuzz.Budgets {
 	return fuzz.LoadBudgets(filepath.Join(home, "scripts", "target-budgets.tsv"))
 }
 
-func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable, profile string) {
+func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable, profile, slugDir string) {
+	// RECORDED, not just printed. A regression found in round 3 of an
+	// overnight campaign used to exist only in the driver's scrollback: the
+	// report could not mention it and the bundle could not ship it.
+	note := func(what, detail string) {
+		f := gate.Failure{Round: round, Workspace: e.Name, Gate: what, Detail: detail}
+		if err := gate.Record(filepath.Join(slugDir, "gate-failures.jsonl"), f); err != nil {
+			fmt.Fprintf(os.Stderr, "  could not record the gate failure: %v\n", err)
+		}
+	}
 	if notJudgeable != "" {
 		fmt.Fprintf(os.Stderr, "  gates skipped: %s\n", notJudgeable)
+		note("skipped", notJudgeable)
 		return
 	}
 	self, err := os.Executable()
@@ -5555,6 +5567,7 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeab
 	if code := run("gate", "gate", "-w", e.Dir, "-logs", e.Data,
 		"-since", roundWindow.String()); code == 1 {
 		fmt.Fprintf(os.Stderr, "  !! %s FAILED A GATE in round %d\n", e.Name, round)
+		note("gate", "starvation, slow-units, ubsan, round-complete or final-stats")
 	}
 	// THE PROFILE, so an experiment cannot raise the production floors.
 	//
@@ -5567,6 +5580,7 @@ func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeab
 		// Reported, not fatal. The campaign's job is to keep fuzzing; the
 		// regression is a fact about this round and the series records it.
 		fmt.Fprintf(os.Stderr, "  !! %s REGRESSED in round %d\n", e.Name, round)
+		note("ratchet", "a floor was not met")
 	}
 	run("ratchet update", "ratchet", "-w", e.Dir, "-logs", e.Data,
 		"-profile", profile, "-update", "-jobs", j)
