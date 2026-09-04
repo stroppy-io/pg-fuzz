@@ -75,6 +75,42 @@ var (
 
 type hit struct{ sig, src string }
 
+// leakScope tracks whether the lines going past belong to a LEAK report.
+//
+// WHY IT HAS TO EXIST. A DEDUP_TOKEN line is emitted by LeakSanitizer AND by
+// UndefinedBehaviorSanitizer, and the two are structurally identical:
+//
+//	DEDUP_TOKEN: ___interceptor_malloc--AllocSetContextCreateInternal--CreateExecutorState
+//	DEDUP_TOKEN: do_to_timestamp--to_date--DirectFunctionCall2Coll
+//
+// The first is a leak, the second is a UB site. Nothing in the token says
+// which. Extract sees one line at a time, so it called every one of them a
+// leak -- which double-counted every UBSan report (once correctly as UBSAN,
+// once as a phantom LEAK) and invented leaks in undefined builds, where the
+// sanitizer that finds leaks is not even linked.
+//
+// The enclosing report is the only evidence, so the reader carries it: a leak
+// block opens with "LeakSanitizer: detected memory leaks" and holds until its
+// SUMMARY, and a "runtime error:" line means UBSan has taken over.
+type leakScope struct{ in bool }
+
+// see updates the scope from a line and reports whether a DEDUP_TOKEN on this
+// line should be read as a leak.
+func (l *leakScope) see(line string) bool {
+	switch {
+	case strings.Contains(line, "LeakSanitizer: detected memory leaks"):
+		l.in = true
+	case strings.Contains(line, "runtime error:"):
+		// UBSan's report; anything it dedups is not a leak.
+		l.in = false
+	case strings.HasPrefix(strings.TrimSpace(line), "SUMMARY:"):
+		// A leak block is closed by its summary. Read the summary first, so
+		// the tokens that preceded it still counted.
+		defer func() { l.in = false }()
+	}
+	return l.in
+}
+
 // Extract pulls every signature out of one log's text.
 func Extract(text string) []struct{ Sig, Src string } {
 	var out []struct{ Sig, Src string }
@@ -98,13 +134,23 @@ func Extract(text string) []struct{ Sig, Src string } {
 	for _, m := range reLF.FindAllStringSubmatch(text, -1) {
 		add("libFuzzer "+m[1], "")
 	}
-	for _, m := range reLeak.FindAllStringSubmatch(text, -1) {
-		add("LEAK in "+m[1], "")
-	}
+	// The leak rule is NOT here: a DEDUP_TOKEN alone cannot say whether it
+	// came from LeakSanitizer or UBSan. ExtractLeak applies it once the
+	// reader has established which report is open.
 	for _, m := range rePanic.FindAllStringSubmatch(text, -1) {
 		add(m[1]+" "+strings.TrimSpace(m[2]), "")
 	}
 	return out
+}
+
+// ExtractLeak pulls a leak signature from a DEDUP_TOKEN line, for a caller
+// that has established the line sits inside a LeakSanitizer report.
+func ExtractLeak(text string) (string, bool) {
+	m := reLeak.FindStringSubmatch(text)
+	if m == nil {
+		return "", false
+	}
+	return "LEAK in " + m[1], true
 }
 
 // reBanner is the per-target banner a sweep log carries.
@@ -122,6 +168,7 @@ var reBanner = regexp.MustCompile(`^-{4} ([a-z_0-9]+_fuzzer) -{4}\s*$`)
 func (b *Builder) AddReader(workspace string, r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
+	var scope leakScope
 	target := ""
 	for sc.Scan() {
 		raw := sc.Bytes()
@@ -133,8 +180,14 @@ func (b *Builder) AddReader(workspace string, r io.Reader) error {
 			target = m[1]
 			continue
 		}
+		inLeak := scope.see(line)
 		for _, h := range Extract(line) {
 			b.record(workspace, target, h.Sig, h.Src)
+		}
+		if inLeak {
+			if sig, ok := ExtractLeak(line); ok {
+				b.record(workspace, target, sig, "")
+			}
 		}
 	}
 	return sc.Err()
@@ -324,9 +377,17 @@ func Family(ws string) string {
 func (b *Builder) AddReaderAs(workspace, target string, r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
+	var scope leakScope
 	for sc.Scan() {
-		for _, h := range Extract(sc.Text()) {
+		line := sc.Text()
+		inLeak := scope.see(line)
+		for _, h := range Extract(line) {
 			b.record(workspace, target, h.Sig, h.Src)
+		}
+		if inLeak {
+			if sig, ok := ExtractLeak(line); ok {
+				b.record(workspace, target, sig, "")
+			}
 		}
 	}
 	return sc.Err()

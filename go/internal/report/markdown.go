@@ -78,6 +78,36 @@ func RenderMarkdown(w io.Writer, d Data) error {
 		p("\n")
 	}
 
+	// ---- what this run found ---------------------------------------------
+	//
+	// SEPARATE FROM "Findings on record" BELOW, which are the project's
+	// standing, triaged write-ups and belong to no single run. This is what
+	// these logs said, and before it existed the answer for a UBSan build was
+	// the artifact count -- structurally zero, because UBSan does not abort
+	// and libFuzzer therefore never saves an input.
+	if d.Scanned {
+		p("## What this run found\n\n")
+		if len(d.Signatures) == 0 {
+			p("The run's own logs were scanned and produced **no signature**.\n\n")
+			p("> That is a result, not a blank. It means the logs were read and\n")
+			p("> nothing in them matched a crash, a sanitizer report or an\n")
+			p("> out-of-memory — which is different from a run whose logs were\n")
+			p("> never read, and this section would be absent in that case.\n\n")
+		} else {
+			p("**%d distinct signature(s)** in this run's own logs.\n\n", len(d.Signatures))
+			p("> Distinct SIGNATURES, not findings and not artifacts. A signature is\n")
+			p("> one site the logs reported, deduplicated across every slice that hit\n")
+			p("> it; a finding is what a person writes after triage. A UBSan run\n")
+			p("> reports sites here and zero artifacts above, because UBSan does not\n")
+			p("> abort and so nothing is ever saved to disk.\n\n")
+			p("| signature | hits | targets |\n|---|---:|---|\n")
+			for _, sg := range d.Signatures {
+				p("| %s | %d | %s |\n", sg.Signature, sg.Hits, strings.Join(sg.Targets, ", "))
+			}
+			p("\n")
+		}
+	}
+
 	// ---- coverage --------------------------------------------------------
 	if c := d.Coverage; c != nil {
 		p("## Coverage\n\nAll %d targets combined, each line counted once.\n\n", c.Targets)

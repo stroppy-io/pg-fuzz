@@ -2551,8 +2551,21 @@ func writeReport(r paths.Roots, slug string, s campaign.Series, covWS, out, mdPa
 	// Absent is not an error: `report -final` and the older slugs predate it,
 	// and a missing section is honest where an empty one would read as "no
 	// patches, no plugins, unknown commit".
-	if m, merr := campaign.ReadManifest(filepath.Join(r.WS, "campaigns", slug)); merr == nil {
+	campDir := filepath.Join(r.WS, "campaigns", slug)
+	if m, merr := campaign.ReadManifest(campDir); merr == nil {
 		d.WithManifest(m)
+		// WHAT THIS RUN ITSELF FOUND, from its own logs.
+		//
+		// Without it the only answer the report had was the raw artifact
+		// count, which is structurally zero on a UBSan build -- so an
+		// undefined sweep that reported seven distinct sites rendered a page
+		// saying "raw artifacts | 0" and nothing else. The manifest names the
+		// workspaces; their logs are in the campaign, not the workspace.
+		b := census.New()
+		for _, e := range m.Entries {
+			addLogsFrom(b, filepath.Join(campDir, "ws", e.Workspace), e.Workspace)
+		}
+		d.WithSignatures(b.Rows())
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
@@ -3932,16 +3945,28 @@ func addLogsFrom(b *census.Builder, dir, ws string) int {
 		"sweep-round*.log", "sweep-round*.log.gz"} {
 		hits, _ := filepath.Glob(filepath.Join(dir, pat))
 		for _, p := range hits {
-			f, err := os.Open(p)
+			// DECOMPRESSED, which this did not do. The glob has always
+			// matched .log.gz and os.Open handed the parser the compressed
+			// bytes, where nothing matches -- so every gzipped log counted as
+			// read and contributed no signature. cmdCensus got this right
+			// with openMaybeGzip; the bundle's census, which uses this, did
+			// not, and a sealed bundle's signature list was therefore missing
+			// whatever had been compressed.
+			//
+			// It hid because the two kinds of log are mixed: 48 plain and 30
+			// gzipped in a sweep item here. A run whose findings happened to
+			// land in the plain logs looked fine, and one whose findings
+			// landed in the gzipped ones reported nothing at all.
+			f, rc, err := openMaybeGzip(p)
 			if err != nil {
 				continue
 			}
 			if strings.HasPrefix(filepath.Base(p), "sweep-round") {
-				b.AddReader(ws, f)
+				b.AddReader(ws, rc)
 			} else {
-				b.AddReaderAs(ws, targetOf(p), f)
+				b.AddReaderAs(ws, targetOf(p), rc)
 			}
-			f.Close()
+			closeAll(rc, f)
 			n++
 		}
 	}

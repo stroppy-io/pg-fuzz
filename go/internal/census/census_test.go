@@ -9,6 +9,13 @@ import (
 // and the consequence was not a mangled signature but NO signature: a campaign
 // whose most interesting result was fifteen distinct leak sites consolidated
 // to zero leak rows.
+//
+// THROUGH THE READER, not Extract. A DEDUP_TOKEN line is emitted by
+// LeakSanitizer and by UBSan in the same shape, so the line alone cannot say
+// which -- only the enclosing report can, and only the reader sees it. This
+// test used to hand Extract the whole block at once, which made a
+// line-oriented bug invisible: every UBSan DEDUP_TOKEN was being counted as a
+// second, phantom leak.
 func TestLeaksAreExtractedOnceEach(t *testing.T) {
 	log := `
 ==12==ERROR: LeakSanitizer: detected memory leaks
@@ -17,13 +24,16 @@ Direct leak of 32768 byte(s) in 4 object(s) allocated from:
 DEDUP_TOKEN: ___interceptor_malloc--AllocSetContextCreateInternal--spi_dest_startup
 SUMMARY: AddressSanitizer: 32768 byte(s) leaked in 4 allocation(s).
 `
-	got := Extract(log)
+	b := New()
+	if err := b.AddReaderAs("ws", "spi_query_fuzzer", strings.NewReader(log)); err != nil {
+		t.Fatal(err)
+	}
 	var leaks int
-	for _, h := range got {
-		if strings.HasPrefix(h.Sig, "LEAK in ") {
+	for _, r := range b.Rows() {
+		if strings.HasPrefix(r.Signature, "LEAK in ") {
 			leaks++
-			if h.Sig != "LEAK in spi_dest_startup" {
-				t.Errorf("signature = %q, want the allocation site", h.Sig)
+			if r.Signature != "LEAK in spi_dest_startup" {
+				t.Errorf("signature = %q, want the allocation site", r.Signature)
 			}
 		}
 	}
@@ -32,6 +42,38 @@ SUMMARY: AddressSanitizer: 32768 byte(s) leaked in 4 allocation(s).
 	// four phantom hits against four real ones when that was tried.
 	if leaks != 1 {
 		t.Errorf("%d leak signatures from one report, want 1", leaks)
+	}
+}
+
+// A UBSAN REPORT IS NOT A LEAK, and an undefined build does not even link the
+// sanitizer that finds leaks. UBSan emits a DEDUP_TOKEN in the same shape as
+// LeakSanitizer, so the old rule counted every UB site twice -- once correctly
+// and once as a leak that could not exist -- and the report inherited both.
+func TestUBSanDedupTokenIsNotALeak(t *testing.T) {
+	log := `
+/src/postgres/src/backend/utils/adt/formatting.c:4770:26: runtime error: signed integer overflow: 2 * 9 cannot be represented in type 'int'
+    #0 0x55 in do_to_timestamp formatting.c:4770:26
+DEDUP_TOKEN: do_to_timestamp--to_date--DirectFunctionCall2Coll
+SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior formatting.c:4770:26
+`
+	b := New()
+	if err := b.AddReaderAs("ws", "formatting_fuzzer", strings.NewReader(log)); err != nil {
+		t.Fatal(err)
+	}
+	var ub, leaks int
+	for _, r := range b.Rows() {
+		switch {
+		case strings.HasPrefix(r.Signature, "LEAK in "):
+			leaks++
+		case strings.HasPrefix(r.Signature, "UBSAN "):
+			ub++
+		}
+	}
+	if leaks != 0 {
+		t.Errorf("a UBSan report produced %d leak signature(s); it cannot leak", leaks)
+	}
+	if ub != 1 {
+		t.Errorf("got %d UBSAN signatures, want 1", ub)
 	}
 }
 

@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"pgfuzz/internal/census"
+	"sort"
 	"time"
 
 	"pgfuzz/internal/campaign"
@@ -50,6 +52,24 @@ type Data struct {
 	// any of it.
 	UnderTest []UnderTestRow
 	Sealed    bool
+
+	// WHAT THIS RUN ITSELF FOUND, as opposed to the project's standing
+	// findings below.
+	//
+	// The report had no way to say it. Findings come from a curated FINDINGS
+	// tree that a person maintains, and "what this run produced" was the raw
+	// artifact count -- a saved input that made a target crash. UBSan does not
+	// abort by default, so libFuzzer never saves an input, so that count is
+	// STRUCTURALLY ZERO on every undefined build. A sweep that found seven
+	// distinct UB sites across ninety-five reports rendered a report with
+	// "raw artifacts | 0" and no other mention of them: half the matrix
+	// producing reports that could not describe what that half exists to find.
+	//
+	// Scanned is separate from empty on purpose. A run whose logs were read
+	// and yielded nothing is a different statement from a run whose logs were
+	// never read, and collapsing them is how absence gets read as a pass.
+	Signatures []SignatureRow
+	Scanned    bool
 
 	Coverage     *coverage.Summary
 	Findings     []findings.Finding
@@ -109,6 +129,31 @@ func (d *Data) WithManifest(m campaign.Manifest) {
 			Patches: e.Patches, BuildOK: e.BuildOK, Note: e.Note,
 		})
 	}
+}
+
+// SignatureRow is one distinct thing this run's logs reported.
+type SignatureRow struct {
+	Signature string
+	Hits      int
+	Targets   []string
+}
+
+// WithSignatures attaches the census of THIS run, the way WithManifest
+// attaches what was under test. Passing an empty slice still sets Scanned:
+// "we looked and there was nothing" is a result, and the report says it.
+func (d *Data) WithSignatures(rows []census.Row) {
+	d.Scanned = true
+	for _, r := range rows {
+		d.Signatures = append(d.Signatures, SignatureRow{
+			Signature: r.Signature, Hits: r.Hits, Targets: r.Targets,
+		})
+	}
+	sort.Slice(d.Signatures, func(i, j int) bool {
+		if d.Signatures[i].Hits != d.Signatures[j].Hits {
+			return d.Signatures[i].Hits > d.Signatures[j].Hits
+		}
+		return d.Signatures[i].Signature < d.Signatures[j].Signature
+	})
 }
 
 func Gather(slug string, series campaign.Series, findingsRoot string, cov *coverage.Summary) (Data, error) {
