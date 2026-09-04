@@ -1714,7 +1714,7 @@ func cmdCoverage(argv []string) int {
 			return 0
 		}
 	}
-	profiles, err := coverage.FindProfiles(r.WS)
+	profiles, err := coverage.FindProfiles(r.WS, buildDir(dir, c, r))
 	if err != nil || len(profiles) == 0 {
 		fmt.Fprintf(os.Stderr, "pgfuzz: no per-target profiles under %s\n", r.WS)
 		return 2
@@ -2238,7 +2238,7 @@ func writeReport(r paths.Roots, slug string, s campaign.Series, covWS, out, mdPa
 	if covWS != "" {
 		dir, c, _, err := openWS(covWS)
 		if err == nil {
-			profiles, _ := coverage.FindProfiles(r.WS)
+			profiles, _ := coverage.FindProfiles(r.WS, buildDir(dir, c, r))
 			if len(profiles) > 0 {
 				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 				defer stop()
@@ -3267,7 +3267,7 @@ func cmdBundle(argv []string) int {
 		if err != nil {
 			m.Add("coverage", false, err.Error())
 		} else {
-			profiles, _ := coverage.FindProfiles(r.WS)
+			profiles, _ := coverage.FindProfiles(r.WS, buildDir(dir, c, r))
 			if len(profiles) == 0 {
 				m.Add("coverage", false, "no per-target profiles on disk")
 			} else if sum, err := coverage.Union(ctx, coverage.UnionRequest{

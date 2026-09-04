@@ -35,7 +35,7 @@ func TestFindProfilesKeepsOneRunPerTarget(t *testing.T) {
 	d := filepath.Join(root, ".cov-parallel-new", "alpha_fuzzer", "upper", "dumps")
 	os.WriteFile(filepath.Join(d, "merged.profdata"), []byte("x"), 0o644)
 
-	got, err := FindProfiles(root)
+	got, err := FindProfiles(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}

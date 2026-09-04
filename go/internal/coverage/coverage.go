@@ -221,11 +221,33 @@ func parseSummary(path string, targets int) (Summary, error) {
 // Newest per TARGET, not newest overall: a pass that re-measured six targets
 // must not throw away the seventeen from the pass before it, and taking a
 // single directory reported one target's coverage as the whole campaign's.
-func FindProfiles(root string) ([]string, error) {
-	hits, err := filepath.Glob(filepath.Join(root, ".cov-parallel-*", "*", "upper", "dumps", "*.profdata"))
+func FindProfiles(root, buildOut string) ([]string, error) {
+	// TWO LAYOUTS, and only one of them is still written.
+	//
+	// base-runner writes $OUT/dumps/<target>.profdata, which is where every
+	// profile this tool produces lands. The glob here looked only under
+	// .cov-parallel-*/<t>/upper/dumps/ -- a layout the deleted shell created
+	// and nothing in the port does. So -measure wrote profiles that -union
+	// could not see: a union merged shell-era leftovers, or reported "no
+	// per-target profiles on disk" for a workspace that had just measured
+	// every target.
+	//
+	// The old layout is still read because sixteen of those directories exist
+	// on this host and their measurements are real; it is a fallback, not the
+	// source.
+	var hits []string
+	if buildOut != "" {
+		m, err := filepath.Glob(filepath.Join(buildOut, "dumps", "*.profdata"))
+		if err != nil {
+			return nil, err
+		}
+		hits = append(hits, m...)
+	}
+	legacy, err := filepath.Glob(filepath.Join(root, ".cov-parallel-*", "*", "upper", "dumps", "*.profdata"))
 	if err != nil {
 		return nil, err
 	}
+	hits = append(hits, legacy...)
 	best := map[string]string{}
 	bestAt := map[string]time.Time{}
 	for _, p := range hits {
