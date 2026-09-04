@@ -16,8 +16,10 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"pgfuzz/internal/coverage"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,7 +58,9 @@ type Row struct {
 	// Freshness separates a build this run made from one an earlier run left
 	// behind, which "Built" alone cannot.
 	Freshness campaign.BuildFreshness
-	Failed    bool
+	// Covering is the target this workspace is measuring coverage for, or "".
+	Covering string
+	Failed   bool
 	// Corpus, CorpusNew and CovPct are the three columns the old dashboard
 	// carried beside the grid: size now, what this round added, and what the
 	// coverage build measured.
@@ -91,16 +95,20 @@ type Model struct {
 	// shape this package's own doc comment describes. campaign.State.Hours sat
 	// in campaign.json unread, so the header showed elapsed with nothing to
 	// measure it against and a reader could not tell 2h into 24 from 2h into 2.
-	Hours     float64
-	Live      bool
-	Round     int
-	Targets   []string
-	Rows      []Row
-	Slices    int
-	TotalExec int
-	TotalNew  int
-	TotalArts int
-	Err       string
+	Hours float64
+	// CovDone and CovTotal are how far through a coverage pass the machine is.
+	// A coverage pass is BOUNDED, which is what makes a completion figure
+	// meaningful here where it is meaningless for a fuzzing round.
+	CovDone, CovTotal int
+	Live              bool
+	Round             int
+	Targets           []string
+	Rows              []Row
+	Slices            int
+	TotalExec         int
+	TotalNew          int
+	TotalArts         int
+	Err               string
 
 	// Workspaces being BUILT right now. A campaign builds into its own
 	// directory before it sweeps, and before this the dashboard said "no
@@ -157,6 +165,29 @@ func LoadWithPanels(campaignsRoot, slug, repo, wsRoot string) Model {
 	m.Growth = GrowthPanel(
 		filepath.Join(repo, "scripts", "ratchet-series.jsonl"),
 		covSeries, names, 24)
+	// A COVERAGE PASS IS NOT IDLE. helper.py names its own containers, so
+	// RunningNow cannot see them and the header said "idle -- no container
+	// running" for the whole of phase 3. The pass records itself instead.
+	for i := range m.Rows {
+		if l := coverage.ReadLive(filepath.Join(wsRoot, m.Rows[i].Name)); l != nil {
+			m.Rows[i].Covering = l.Target
+			m.CovDone, m.CovTotal = l.Done, l.Total
+		}
+	}
+	if m.CovTotal > 0 {
+		// Stated with its progress, because a coverage pass is BOUNDED --
+		// which is what makes a completion figure meaningful here and
+		// meaningless for a fuzzing round.
+		var covering []string
+		for _, row := range m.Rows {
+			if row.Covering != "" {
+				covering = append(covering, row.Name+" "+Code(row.Covering))
+			}
+		}
+		sort.Strings(covering)
+		m.Activity = fmt.Sprintf("measuring coverage [%d/%d]   %s",
+			m.CovDone, m.CovTotal, strings.Join(covering, "   "))
+	}
 	m.System = ReadSystem(wsRoot)
 	m.Status = StatusLine(m.System)
 	return m

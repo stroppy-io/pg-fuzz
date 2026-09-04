@@ -1704,7 +1704,14 @@ func cmdCoverage(argv []string) int {
 		defer stop()
 
 		failed := 0
-		for _, t := range targets {
+		// Recorded so the dashboard can say a coverage pass is running, and
+		// how far through a BOUNDED pass it is -- the figure the Python had
+		// and a fuzzing round can never report.
+		defer coverage.ClearLive(dir)
+		for i, t := range targets {
+			coverage.MarkLive(dir, coverage.Live{
+				Workspace: c.Name, Target: t, Done: i, Total: len(targets),
+			})
 			sum, err := coverage.Measure(ctx, coverage.MeasureRequest{
 				OSSFuzz: r.OSSFuzz(), Project: c.Project, Target: t,
 				Corpus:    filepath.Join(dir, "corpus", t),
