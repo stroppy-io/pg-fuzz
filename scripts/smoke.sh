@@ -42,11 +42,36 @@ export PATH
 mkdir -p "$OUT"
 
 FAILED=()
+# FOLDED ON GITHUB, flat everywhere else.
+#
+# One item of this pipeline is six thousand lines, and about thirty of them are
+# the answer. The build alone is make walking a thousand directories -- and
+# under `make -j` its output physically interleaves, so lines arrive spliced
+# into each other and no filter can unmangle them. Reading a failure meant
+# scrolling past all of it.
+#
+# ::group:: is GitHub's own folding, so each step collapses to a single clickable
+# line and the log reads as the list of steps it actually is. NOTHING IS HIDDEN:
+# a group is closed, not dropped, it is still in the log, and a step's verdict
+# is printed OUTSIDE its group so the shape of the run is visible without
+# opening anything.
+#
+# Detected from the environment rather than a flag, because this is a fact
+# about where the output is going, not a mode somebody chooses.
+group_open() { [ -n "${GITHUB_ACTIONS:-}" ] && printf '::group::%s\n' "$1" || :; }
+group_close() { [ -n "${GITHUB_ACTIONS:-}" ] && printf '::endgroup::\n' || :; }
+
 step() {
 	local name=$1; shift
 	printf '\n\033[1m== %s\033[0m\n' "$name"
-	if "$@"; then printf '   \033[32mok\033[0m   %s\n' "$name"
-	else printf '   \033[31mFAIL\033[0m %s\n' "$name"; FAILED+=("$name"); fi
+	group_open "$name"
+	if "$@"; then
+		group_close
+		printf '   \033[32mok\033[0m   %s\n' "$name"
+	else
+		group_close
+		printf '   \033[31mFAIL\033[0m %s\n' "$name"; FAILED+=("$name")
+	fi
 }
 
 # A CAMPAIGN, because that is the code path a long run uses. Sealed so the

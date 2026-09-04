@@ -77,5 +77,32 @@ func drop(s string) bool {
 			return true
 		}
 	}
-	return strings.Contains(t, " -c -o ")
+	if strings.Contains(t, " -c -o ") {
+		return true
+	}
+	// MAKE WALKING THE TREE, and apt unpacking it. PostgreSQL's build enters
+	// and leaves about a thousand directories, and that bookkeeping was 1,266
+	// lines of one item -- plus 657 rm, 616 recursive make invocations and
+	// apt's unpack chatter. None of it is ever the answer to anything.
+	//
+	// "make[1]: *** [Makefile:42: all] Error 1" does NOT match any of these,
+	// and would be kept by the error guard above regardless. That ordering is
+	// the point: the rules below only ever see lines already known not to
+	// carry a diagnostic.
+	for _, p := range []string{
+		"make -C ", "make[", "rm -f ", "rm -rf ",
+		"(Reading database", "Preparing to unpack", "Unpacking ",
+		"Selecting previously", "Setting up ", "Processing triggers",
+		"Get:", "Fetched ", "Reading package lists", "Building dependency tree",
+		"Reading state information",
+	} {
+		if strings.HasPrefix(t, p) {
+			// A recursive make that FAILED still speaks.
+			if strings.Contains(t, "***") || strings.Contains(t, "Error") {
+				return false
+			}
+			return true
+		}
+	}
+	return strings.HasPrefix(t, "( echo ") && strings.Contains(t, "objfiles.txt")
 }

@@ -19,14 +19,24 @@
 # useless canary. Fixing one upstream is not a problem: withdraw the row, in a
 # commit that says the fix landed.
 #
-# BUILT FROM OBSERVATION, NOT FROM THE ACCEPT-LIST. Every row below was seen in
-# GitHub run 33891551739, in BOTH REL_16_STABLE and REL_17_STABLE, at 30
-# seconds a target. The counts were near-identical across two independent
-# builds, which is the property that makes them assertable. Note what is NOT
-# here: pg_strtoint64_safe is on the UBSan accept-list and did not fire once in
-# either run, so it is a real accepted site and an unusable canary. Do not add
-# a row because it appears in FINDINGS -- add it because a run produced it
-# twice.
+# BUILT FROM OBSERVATION, NOT FROM THE ACCEPT-LIST, and rebuilt once the first
+# version was wrong. Every row below appeared in ALL SIX 16/17 undefined
+# records now on hand, from THREE separate GitHub runs (33891551739,
+# 33899248721, 33906938355) at 30 seconds a target.
+#
+# ONE OBSERVATION IS NOT REPRODUCIBILITY. The first version of this file was
+# built from a single run and asserted isoweek2j, which appeared in five of the
+# six records and not in the sixth -- so the control failed a healthy run, and
+# was right to: the row was not dependable and the list said it was. It is
+# withdrawn. A row that fires most of the time is a fine finding and a useless
+# canary, which is the whole distinction this file exists to make.
+#
+# AND pg_strtoint64_safe IS BACK. The first version excluded it with the note
+# "did not fire once in either run". That was a measurement error, not a fact:
+# the extraction used to build the list missed its frame. It is present in all
+# six records. Recorded here because the mistake is instructive -- the list is
+# only as good as the query that produced it, and "absent" needed checking
+# twice as hard as "present".
 #
 # KEYED ON FUNCTION, NOT LINE. timestamp.c:1945 on 16 is timestamp.c:2016 on
 # 17. The function survives a rebase; the line does not.
@@ -56,7 +66,7 @@
 do_to_timestamp	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	formatting.c	signed-overflow	FINDINGS/README.md	2026-09-04
 tm2timestamp	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	timestamp.c	signed-overflow	FINDINGS/README.md	2026-09-04
 date2j	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	datetime.c	signed-overflow	FINDINGS/README.md	2026-09-04
-isoweek2j	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	timestamp.c	signed-overflow	FINDINGS/README.md	2026-09-04
 pg_strtoint32_safe	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	numutils.c	signed-overflow	FINDINGS/README.md	2026-09-04
+pg_strtoint64_safe	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	numutils.c	signed-overflow	FINDINGS/README.md	2026-09-04
 inet_net_pton_ipv4	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	inet_net_pton.c	signed-overflow	FINDINGS/README.md	2026-09-04
 inet_cidr_pton_ipv4	ci-rel_16*-undefined,ci-rel_17*-undefined,pg16*und*,pg17*und*	inet_net_pton.c	signed-overflow	FINDINGS/README.md	2026-09-04

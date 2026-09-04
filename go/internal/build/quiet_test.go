@@ -80,3 +80,35 @@ func TestFilterNil(t *testing.T) {
 		t.Fatal("Filter(nil) must stay nil")
 	}
 }
+
+// A FAILING RECURSIVE MAKE STILL SPEAKS. The bookkeeping rules drop "make[4]:
+// Entering directory", which is a thousand lines of nothing -- but
+// "make[1]: *** [Makefile:42: all] Error 1" is the line that says the build
+// died, and it starts with the same prefix.
+func TestFilterKeepsMakeFailures(t *testing.T) {
+	in := strings.Join([]string{
+		"make[4]: Entering directory '/src/postgres/bld/src/backend/utils'",
+		"make -C parser all",
+		"rm -f libpq.a",
+		"(Reading database ... 45%",
+		"make[1]: *** [Makefile:42: all] Error 1",
+		"make[2]: *** wait: No child processes.  Stop.",
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	f := Filter(&out)
+	if _, err := f.Write([]byte(in)); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, keep := range []string{"Error 1", "wait: No child processes"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("dropped a make failure: %q", keep)
+		}
+	}
+	for _, gone := range []string{"Entering directory", "make -C parser", "rm -f libpq.a", "Reading database"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("kept bookkeeping: %q", gone)
+		}
+	}
+}
