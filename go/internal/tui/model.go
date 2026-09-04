@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"pgfuzz/internal/breakdown"
 	"pgfuzz/internal/coverage"
 	"sort"
 	"strconv"
@@ -118,6 +119,14 @@ type Model struct {
 	// say it is filtered reads as a campaign that lost workspaces.
 	RowsTotal int
 	Filter    string
+	// Breakdown is crashes by component, for the view `b` opens. Filled only
+	// in LoadWithPanels, which is the path that knows where the workspaces
+	// are.
+	Breakdown []BreakdownRow
+	// History is the other campaigns under this root, newest first, for the
+	// view `h` opens. A dashboard could not previously answer "what did the
+	// last five campaigns find" without leaving it.
+	History   []HistoryRow
 	Live      bool
 	Round     int
 	Targets   []string
@@ -206,6 +215,11 @@ func LoadWithPanels(campaignsRoot, slug, repo, wsRoot string) Model {
 		m.Activity = fmt.Sprintf("measuring coverage [%d/%d]   %s",
 			m.CovDone, m.CovTotal, strings.Join(covering, "   "))
 	}
+	// THE COMPONENT VIEW'S DATA. Scanned from the crash logs a slice writes,
+	// for the selected campaign's workspaces -- the same source `pgfuzz
+	// breakdown` uses, so the dashboard and the command cannot disagree.
+	m.Breakdown = loadBreakdown(wsRoot, m.Rows, m.Targets)
+	m.History = History(campaignsRoot, 25)
 	m.System = ReadSystem(wsRoot)
 	m.Status = StatusLine(m.System)
 	return m
@@ -549,6 +563,34 @@ func Code(target string) string {
 // os.Signal(nil) is not that -- it typecheck but signals nothing and always
 // returned nil, so a finished campaign reported itself as running. A marker
 // file would be worse still: it outlives a kill -9.
+// loadBreakdown reads crashes by component for the campaign's workspaces.
+//
+// From the same scan `pgfuzz breakdown` uses, so the dashboard and the command
+// cannot disagree about where the crashes came from.
+func loadBreakdown(wsRoot string, rows []Row, targets []string) []BreakdownRow {
+	byComp := map[string]map[string]int{}
+	for _, r := range rows {
+		for comp, per := range breakdown.Scan(filepath.Join(wsRoot, r.Name), nil) {
+			if byComp[comp] == nil {
+				byComp[comp] = map[string]int{}
+			}
+			for t, n := range per {
+				byComp[comp][t] += n
+			}
+		}
+	}
+	var out []BreakdownRow
+	for comp, per := range byComp {
+		row := BreakdownRow{Component: comp, PerTarget: per}
+		for _, n := range per {
+			row.Total += n
+		}
+		out = append(out, row)
+	}
+	SortBreakdown(out)
+	return out
+}
+
 func processAlive(pid int) bool {
 	p, err := os.FindProcess(pid)
 	if err != nil {

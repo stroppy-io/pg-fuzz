@@ -15,6 +15,11 @@ type View int
 const (
 	Grid View = iota
 	Detail
+	// Breakdown is crashes by component at the grid's geometry; History is
+	// the other campaigns under this root. Both were reachable from the
+	// Python's grid and from nothing here.
+	BreakdownView
+	HistoryView
 )
 
 // THE LAYOUT IS THE OLD DASHBOARD'S, deliberately.
@@ -78,6 +83,10 @@ func Draw(s *term.Screen, m Model, v View, sel int, rows, cols int) {
 	switch v {
 	case Detail:
 		drawDetail(s, m, sel)
+	case BreakdownView:
+		drawBreakdown(s, m, sel)
+	case HistoryView:
+		drawHistory(s, m)
 	default:
 		drawPanels(s, m, drawGrid(s, m, sel))
 	}
@@ -296,7 +305,9 @@ func cell(r Row, target string, w int) (string, string) {
 }
 
 func drawFooter(s *term.Screen, m Model, v View) {
-	keys := "q quit   d detail   g grid   up/down select"
+	// EVERY KEY THAT EXISTS. A view reachable only by somebody who read the
+	// source is not reachable.
+	keys := "q quit   g grid   d detail   b components   h history   f filter   up/down select"
 	if m.Err != "" {
 		keys = term.Yellow + m.Err + term.Reset + "   " + keys
 	}

@@ -2250,6 +2250,14 @@ func cmdTUI(argv []string) int {
 		case 'g', 'G':
 			view = tui.Grid
 			draw()
+		case 'b', 'B':
+			// The component view, at the grid's geometry, as the Python had.
+			view = tui.BreakdownView
+			draw()
+		case 'h', 'H':
+			// The other campaigns under this root.
+			view = tui.HistoryView
+			draw()
 		case 'f', 'F':
 			// Cycle all -> active -> live, as the Python did.
 			filter = filter.Next()
