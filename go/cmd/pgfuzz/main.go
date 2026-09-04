@@ -586,22 +586,27 @@ func cmdBuild(argv []string) int {
 			fmt.Fprintf(os.Stderr, "    OrioleDB pins PostgreSQL %s to %s\n", useRef, pinned)
 			useRef = pinned
 
-			// A SHALLOW CLONE DOES NOT CONTAIN THE PATCHSET COMMIT, and this
-			// is the second place that has bitten -- the oss-fuzz pin below
-			// was the first, for exactly the same reason.
+			// A SHALLOW CLONE DOES NOT CONTAIN THE PIN, and this is the
+			// second place that has bitten -- the oss-fuzz pin below was the
+			// first, for exactly the same reason.
 			//
-			// `bootstrap -shallow` clones at --depth 1 --no-single-branch, so
-			// it has every BRANCH TIP and no history. Checked against the full
-			// clone on the campaign host, NONE of the three commits .pgtags
-			// names is a tip:
+			// `bootstrap -shallow` clones at --depth 1 --no-single-branch: it
+			// gets every BRANCH TIP and no history and no tags. What .pgtags
+			// names is a TAG on the fork --
 			//
-			//	PG16 -> 9de7f2bfb89c   is-a-branch-tip: no
-			//	PG17 -> 1e13fa1993dd   is-a-branch-tip: no
-			//	PG18 -> 28592521ad7e   is-a-branch-tip: no
+			//	16: patches16_48
+			//	17: patches17_21
+			//	18: patches18_2
 			//
-			// so a shallow CI runner would resolve the pin correctly and then
-			// fail to export it. Asking for the one commit by sha costs
-			// nothing and is a no-op on a full clone.
+			// -- which is not a branch tip, so a shallow runner resolves the
+			// pin correctly and then cannot export it. Asking for that one ref
+			// by name costs nothing and is a no-op on a full clone.
+			//
+			// (An earlier version of this comment quoted three commit hashes
+			// here, read from a stale local clone. Upstream changed .pgtags
+			// from hashes to tags and the cache had not been refreshed -- so
+			// the reasoning was right and every fact in it was out of date.
+			// Read .pgtags from the resolved ref, never from memory.)
 			exec.Command("git", "-C", repoDir, "fetch", "--quiet",
 				"--depth", "1", "origin", pinned).Run()
 		}

@@ -132,7 +132,31 @@ if [ -d orioledb ] && [ -f orioledb/orioledb.control ]; then
 	# this the check sees the Makefile's fallback value of 1 and aborts.
 	PGSHA=$(awk '{print $3}' .pgfuzz-ref 2>/dev/null)
 	[ -n "$PGSHA" ] || { echo "ERROR: no PostgreSQL commit in .pgfuzz-ref" >&2; exit 1; }
-	echo "build.sh: OrioleDB flavor, PostgreSQL patchset $PGSHA"
+
+	# .pgtags NOW NAMES A TAG, NOT A COMMIT, and the check compares against
+	# whichever it holds. Upstream changed the format:
+	#
+	#	17: 1e13fa1993dd9b1b867e6362c1f1930849e8be7b   (what it used to say)
+	#	17: patches17_21                               (what it says now)
+	#
+	# check_patchset_version.py splits "patches17_21" on the underscore and
+	# expects the numeric half, so passing the commit hash -- which is what
+	# this did, and what worked against the old format -- now fails every
+	# OrioleDB build with
+	#
+	#	Wrong orioledb patchset version: expected 21, got e1ec37301414...
+	#
+	# The ref field of .pgfuzz-ref is what the tree was exported AT, so when
+	# that is a patches tag the version is simply its numeric half. Taken from
+	# the export rather than re-read out of .pgtags on purpose: reading the
+	# expected value and handing it back would satisfy the check by
+	# construction and assert nothing about the tree.
+	PGREF=$(awk '{print $1}' .pgfuzz-ref 2>/dev/null)
+	case "$PGREF" in
+		patches*_*) ORIOLEDB_PATCHSET=${PGREF##*_} ;;
+		*)          ORIOLEDB_PATCHSET=$PGSHA ;;
+	esac
+	echo "build.sh: OrioleDB flavor, PostgreSQL $PGSHA, patchset $ORIOLEDB_PATCHSET (from $PGREF)"
 else
 	ORIOLEDB=0
 	# Read it here too. cmd_sync writes .pgfuzz-ref for *every* workspace, but
@@ -351,8 +375,8 @@ if [ "$ORIOLEDB" = 1 ]; then
 	# `rm -rf tmp_install` -- so an extension installed earlier is silently
 	# deleted again, and the server then refuses to start on a
 	# shared_preload_libraries entry whose file no longer exists.
-	su fuzzuser -c "make -C ../../../../orioledb -j$(nproc) USE_PGXS=1 PG_CONFIG=$PGBIN/pg_config ORIOLEDB_PATCHSET_VERSION=$PGSHA"
-	su fuzzuser -c "make -C ../../../../orioledb USE_PGXS=1 PG_CONFIG=$PGBIN/pg_config ORIOLEDB_PATCHSET_VERSION=$PGSHA install"
+	su fuzzuser -c "make -C ../../../../orioledb -j$(nproc) USE_PGXS=1 PG_CONFIG=$PGBIN/pg_config ORIOLEDB_PATCHSET_VERSION=$ORIOLEDB_PATCHSET"
+	su fuzzuser -c "make -C ../../../../orioledb USE_PGXS=1 PG_CONFIG=$PGBIN/pg_config ORIOLEDB_PATCHSET_VERSION=$ORIOLEDB_PATCHSET install"
 	test -f "$PGBIN/../lib/orioledb.so" || { echo "ERROR: orioledb.so not installed" >&2; exit 1; }
 	# The cluster exists now but knows nothing about OrioleDB.  Preload the
 	# library and create the extension in the database the harnesses attach to.
@@ -1106,12 +1130,12 @@ if [ "$ORIOLEDB" = 1 ]; then
 	# `make clean` above removed the latter, and the former is the copy the
 	# fuzz targets will actually load orioledb.so from at runtime.
 	OUT_PGCONFIG=$OUT/tmp_install/usr/local/pgsql/bin/pg_config
-	make -C ../orioledb clean USE_PGXS=1 PG_CONFIG=$OUT_PGCONFIG ORIOLEDB_PATCHSET_VERSION=$PGSHA || true
+	make -C ../orioledb clean USE_PGXS=1 PG_CONFIG=$OUT_PGCONFIG ORIOLEDB_PATCHSET_VERSION=$ORIOLEDB_PATCHSET || true
 	# CC/CXX must be overridden too, not just COPT: PGXS inherits the compiler
 	# from the installed Makefile.global, which recorded gcc from the
 	# uninstrumented configure, and gcc rejects clang's sanitizer flags
 	# (-fsanitize=fuzzer-no-link, -gline-tables-only).
-	make -C ../orioledb -j$(nproc) USE_PGXS=1 PG_CONFIG=$OUT_PGCONFIG ORIOLEDB_PATCHSET_VERSION=$PGSHA \
+	make -C ../orioledb -j$(nproc) USE_PGXS=1 PG_CONFIG=$OUT_PGCONFIG ORIOLEDB_PATCHSET_VERSION=$ORIOLEDB_PATCHSET \
 		CC="$CC" CXX="$CXX" COPT="$CFLAGS"
 	# Keep the uninstrumented build beside the instrumented one.  The fuzz targets
 	# need the instrumented orioledb.so, but storage_fuzzer.py starts a *real*
