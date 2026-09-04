@@ -103,6 +103,35 @@ step() {
 # not exist.
 frame() { printf '\n'; pgfuzz tui -slug "$SLUG" || :; }
 
+# AN APPEND-ONLY LOG CANNOT REDRAW A CELL.
+#
+# A terminal dashboard works by overwriting itself; a CI log has no cursor, so
+# twenty frames are twenty copies stacked down the page and the newest is
+# wherever the scrollbar happens to be. Fighting that is pointless.
+#
+# So the stream becomes a TIMELINE instead: each frame goes inside a group
+# whose TITLE is its own header line -- the round, what is built, how many
+# slices, the clock. The page is then a list of one-liners in time order, any
+# of which opens to the full grid, and the last frame is left OPEN so the
+# finishing state needs no click.
+#
+# The title has its colour stripped: it is rendered as a summary by the log
+# viewer, not as terminal output, and escape codes there are literal.
+frame_folded() {
+	local out title
+	out=$(pgfuzz tui -slug "$SLUG" 2>/dev/null) || return 0
+	[ -n "$out" ] || return 0
+	# The header AND the NOW line: "what state is it in" plus "what is it doing
+	# this second". Either alone makes a timeline entry you have to open to
+	# understand, which defeats the folding.
+	title=$(printf '%s\n' "$out" | sed -n '1p;2p' | sed 's/\x1b\[[0-9;]*m//g' \
+		| paste -sd '|' - | sed 's/|/   /g')
+	printf '\n'
+	group_open "$title"
+	printf '%s\n' "$out"
+	group_close
+}
+
 # A FRAME WHILE IT RUNS, not only when it is over.
 #
 # The first version printed one frame AFTER the campaign, which meant that for
@@ -134,7 +163,7 @@ campaign_watched() {
 		waited=$((waited + 2))
 		if [ "$waited" -ge "$interval" ]; then
 			waited=0
-			kill -0 "$pid" 2>/dev/null && frame
+			kill -0 "$pid" 2>/dev/null && frame_folded
 		fi
 	done
 	# The campaign's own exit code, not the loop's -- `wait` reports it, and
