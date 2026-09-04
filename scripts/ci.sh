@@ -124,15 +124,52 @@ job_sweep() {
 	# while act's $RUNNER_TEMP is inside act's own container. Without this the
 	# builder mounts an empty directory, build.sh finds no .pgfuzz-ref, and it
 	# reads as a broken export rather than as two filesystems.
+	# The WORKSPACE is wiped and the CACHE is kept. A stale workspace is what
+	# produces a false green -- yesterday's build satisfying today's check --
+	# so it goes every time. The cache holds the postgres and oss-fuzz clones,
+	# which take a minute and a half to fetch and are pinned by content; the
+	# clone step still runs against it and still updates it.
+	# AND AN ARTIFACT BACKEND, rather than an excuse for not having one.
+	# Without it upload-artifact fails on ACTIONS_RUNTIME_TOKEN and the job is
+	# red no matter what the sweep did -- which is how a check ends up with a
+	# hand-written exemption. act can serve artifacts from a directory, so the
+	# upload runs for real, and `if-no-files-found: error` on the record means
+	# a run that produced no manifest or report fails HERE.
 	local root=/tmp/pgfuzz-act
-	rm -rf "$root"; mkdir -p "$root"
+	mkdir -p "$root"
 
-	local log
-	log=$(mktemp)
+	# THE WIPE RUNS AS ROOT, AND IS CHECKED.
+	#
+	# Everything the build container writes is root-owned, so `rm -rf` as this
+	# user removes what it can, prints Permission denied for the rest, and
+	# leaves a workspace behind. The next run then failed at `workspace`
+	# ("already exists") -- which was at least loud. The dangerous version is
+	# the one where enough survives to satisfy a later check: a build from
+	# yesterday passing today's sweep is a false green, and this job exists to
+	# find those, not produce them. So: remove as root through a container --
+	# no sudo, and docker is already a hard requirement here -- then VERIFY,
+	# because a wipe that half-worked is the whole problem.
+	docker run --rm -v "$root:/r" catthehacker/ubuntu:act-latest \
+		rm -rf /r/ws /r/out /r/bin /r/artifacts >/dev/null 2>&1
+	local left
+	left=$(ls -A "$root/ws" "$root/out" "$root/bin" "$root/artifacts" 2>/dev/null | head -3)
+	if [ -n "$left" ]; then
+		bad "could not clear $root -- a stale workspace would make this run meaningless"
+		echo "$left"
+		return
+	fi
+
+	# A STABLE PATH, not a mktemp. A job that takes five minutes and hides its
+	# log behind a name printed only on failure is a job you end up reading out
+	# of /proc/<pid>/fd/1 while it runs. Named up front, and where the run's
+	# other output already lives.
+	local log="$root/act.log"
+	echo "   log: $log"
 	"$act" -j sweep -W .github/workflows/sweep.yml \
 		--matrix ref:REL_17_STABLE --matrix sanitizer:address \
 		--container-daemon-socket /var/run/docker.sock \
 		--container-options "-v $root:$root" \
+		--artifact-server-path "$root/artifacts" \
 		--env "PGFUZZ_ACT_ROOT=$root" >"$log" 2>&1
 	local rc=$?
 

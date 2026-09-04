@@ -104,12 +104,21 @@ jobs:
 
       # Into a directory that exists, and onto PATH for every later step --
       # neither of which was true the first time this ran.
+      # THE BINARY MOUNTS ITSELF INTO THE BUILD CONTAINER, so its path has to
+      # exist for the daemon that starts that container. On a real runner
+      # $HOME is a host path and anywhere works. Under act it is not: the
+      # daemon is the HOST's, it cannot see act's $HOME, and docker helpfully
+      # creates the missing mount source as an empty DIRECTORY -- which fails
+      # as `exec: "/pgfuzz": is a directory`, four layers from the cause.
+      # Installing under the shared root keeps one rule: anything the build
+      # container mounts lives somewhere both sides can see.
       - name: build pgfuzz
         run: |
-          mkdir -p "$HOME/.local/bin"
-          (cd go && go build -o "$HOME/.local/bin/pgfuzz" ./cmd/pgfuzz)
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/pgfuzz" 2>&1 | head -2
+          bin="${PGFUZZ_ACT_ROOT:-$HOME/.local}/bin"
+          mkdir -p "$bin"
+          (cd go && go build -o "$bin/pgfuzz" ./cmd/pgfuzz)
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/pgfuzz" 2>&1 | head -2
 
       - name: roots
         run: |
@@ -200,23 +209,54 @@ jobs:
                -printf '%p\n' 2>/dev/null | head -50
 
       # A crash found here must be retrievable, or finding it was pointless.
-      - name: upload reproducers and record
+      # TWO UPLOADS, BECAUSE THE TWO HALVES FAIL DIFFERENTLY.
+      #
+      # A sanity-check sweep normally finds NOTHING, so an empty reproducer set
+      # is the expected result and `ignore` is right. The record is the
+      # opposite: a manifest, a series and a report are produced by every run
+      # that got as far as this step, so their absence means a step did not do
+      # what it said. Uploading both under one `ignore` made "no crashes" and
+      # "the pipeline produced nothing" the same green tick.
+      #
+      # A SEALED CAMPAIGN WRITES UNDER THE SLUG. Every path here was wrong
+      # before: they named $PGFUZZ_WS/<ws>/..., which is the UNSEALED layout,
+      # while smoke.sh runs `campaign -sealed -slug ci` and writes to
+      # $PGFUZZ_WS/campaigns/ci/ws/<ws>/. Each glob matched nothing, and
+      # if-no-files-found: ignore meant a sweep that CRASHED would have
+      # uploaded no reproducer and still gone green.
+      - name: upload reproducers
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sweep-${{ matrix.ref }}-${{ matrix.sanitizer }}
+          name: repro-${{ matrix.ref }}-${{ matrix.sanitizer }}
           if-no-files-found: ignore
           retention-days: 14
           path: |
-            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/crash-*
-            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/oom-*
-            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/timeout-*
-            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/leak-*
-            ${{ runner.temp }}/ws/${{ env.WS }}/series.jsonl
-            ${{ runner.temp }}/ws/${{ env.WS }}/artifacts/*/*.samples.jsonl
-            ${{ runner.temp }}/ws/${{ env.WS }}/builds/*.log
-            ${{ runner.temp }}/ws/campaigns/ci/series.jsonl
-            ${{ runner.temp }}/ws/campaigns/ci/MANIFEST.json
-            ${{ runner.temp }}/ws/campaigns/ci/gate-failures.jsonl
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/crash-*
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/oom-*
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/timeout-*
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/leak-*
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/gate-failures.jsonl
+
+      # The evidence a failure is read from: the per-target run logs the gates
+      # parse, the build log, and the documents. `error` on purpose -- but be
+      # precise about what it buys: upload-artifact fails only when NO path
+      # matches, so this catches "the run produced nothing" and not "the
+      # manifest is missing while the logs are there". The per-file assertions
+      # belong to smoke.sh, which checks each step as it runs; this is the
+      # backstop for a job that went green having produced no record at all.
+      - name: upload the record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: record-${{ matrix.ref }}-${{ matrix.sanitizer }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/artifacts/*/run-*.log
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/ws/${{ env.WS }}/build.log
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/series.jsonl
+            ${{ env.PGFUZZ_WS }}/campaigns/ci/MANIFEST.json
             ${{ runner.temp }}/out/report.md
             ${{ runner.temp }}/out/index.html
+            ${{ runner.temp }}/out/bundle/*.tar.gz

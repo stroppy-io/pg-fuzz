@@ -101,7 +101,7 @@ step "bundle" bash -c '
 ' "$SLUG" "$OUT/bundle"
 
 # THE THINGS THAT READ A FINISHED RUN.
-step "census"    pgfuzz census    -w "$WS" -o "$OUT/census" -summary
+step "census"    pgfuzz census    -slug "$SLUG" -w "$WS" -o "$OUT/census" -summary
 step "inventory" pgfuzz inventory -w "$WS"
 # NOTHING TO BREAK DOWN IS NOT A FAILURE HERE. breakdown exits 2 when a
 # workspace has no attributable frames, which is correct -- an empty table and

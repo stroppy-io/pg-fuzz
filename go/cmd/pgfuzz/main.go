@@ -2464,19 +2464,35 @@ func cmdCensus(argv []string) int {
 	summary := fs.Bool("summary", false, "also write SUMMARY.md beside it")
 	name := fs.String("name", "", "campaign name for the summary heading")
 	since := fs.String("since", "", "ignore logs older than this (2026-08-31)")
+	// WHERE THE LOGS ARE, which is not always the workspace -- the same hole
+	// `gate` had, and for the same reason. A sealed campaign writes its slices
+	// under campaigns/<slug>/ws/<name>, so a census pointed at the workspace
+	// scans whatever stale logs that workspace happens to keep, and a census of
+	// a sealed campaign found NOTHING at all. It said "no logs to scan", which
+	// is at least honest, and then nobody could tell that from a campaign that
+	// genuinely crashed nowhere.
+	//
+	// -slug rather than gate's -logs, because census takes many workspaces at
+	// once and one directory cannot serve them all; the campaign names them.
+	slug := fs.String("slug", "", "read logs from this sealed campaign rather than the workspaces")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(argv); err != nil || *out == "" {
 		fs.Usage()
 		return 2
 	}
 	r := paths.Resolve()
+	// Discovery follows the same rule: inside the campaign when one is named.
+	root := r.WS
+	if *slug != "" {
+		root = filepath.Join(r.WS, "campaigns", *slug, "ws")
+	}
 	if len(wss) == 0 {
-		ents, _ := os.ReadDir(r.WS)
+		ents, _ := os.ReadDir(root)
 		for _, e := range ents {
 			if !e.IsDir() {
 				continue
 			}
-			if m := gatherRunLogs(filepath.Join(r.WS, e.Name())); len(m) > 0 {
+			if m := gatherRunLogs(filepath.Join(root, e.Name())); len(m) > 0 {
 				wss = append(wss, e.Name())
 			}
 		}
@@ -2494,7 +2510,7 @@ func cmdCensus(argv []string) int {
 	b := census.New()
 	var logsRead int
 	for _, ws := range wss {
-		dir := filepath.Join(r.WS, ws)
+		dir := filepath.Join(root, ws)
 		var files []string
 		// Both layouts: one log per target (soak, and the Go runner's
 		// artifacts/<target>/run-*.log) and one per round holding all of them
@@ -3606,7 +3622,8 @@ func cmdBundle(argv []string) int {
 		known := map[string]string{}
 		if entries, err := os.ReadFile(filepath.Join(campDir, "live", "entries")); err == nil {
 			for _, ws := range strings.Fields(string(entries)) {
-				logs += addWorkspaceLogs(b, r, ws)
+				// The campaign's own directory, not the workspace's.
+				logs += addLogsFrom(b, filepath.Join(campDir, "ws", ws), ws)
 				if _, c, _, err := openWS(ws); err == nil {
 					known[ws] = c.Sanitizer
 				}
@@ -3758,8 +3775,21 @@ func runGateQuiet(r paths.Roots, ws, baselinePath, logRoot string, window time.D
 	return 0
 }
 
+// addWorkspaceLogs reads a workspace's own logs. A SEALED campaign's logs are
+// not there -- use addLogsFrom with the campaign's directory for those.
 func addWorkspaceLogs(b *census.Builder, r paths.Roots, ws string) int {
-	dir := filepath.Join(r.WS, ws)
+	return addLogsFrom(b, filepath.Join(r.WS, ws), ws)
+}
+
+// addLogsFrom reads run logs out of an explicit directory.
+//
+// THE BUNDLE'S CENSUS WAS READING THE WRONG PLACE. It walked the campaign's
+// live/entries -- the right list of workspaces -- and then looked for their
+// logs under $PGFUZZ_WS/<ws>, the unsealed layout, while the campaign it was
+// bundling had written them under campaigns/<slug>/ws/<ws>. So every sealed
+// campaign's bundle recorded "census: no logs to scan", which reads exactly
+// like a campaign that crashed nowhere.
+func addLogsFrom(b *census.Builder, dir, ws string) int {
 	var n int
 	for _, pat := range []string{
 		"soak-*_fuzzer.log", "soak-*_fuzzer.log.gz",

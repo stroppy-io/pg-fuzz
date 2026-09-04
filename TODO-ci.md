@@ -62,16 +62,49 @@ never been run is itself an unproven script.
       encode one fact from opposite sides. An escape hatch that manufactures
       the failure it avoids is the dead surface this audit spent two days
       deleting, so it is gone and the budgets stay on.
-- [ ] **`.github/workflows/sweep.yml` has never executed.** This is the largest
-      open risk on this page. It is a 10-item matrix (pg16–19 + master ×
-      address/undefined) and nothing has run it, here or on GitHub. `act`
-      cannot: the oss-fuzz build needs docker inside the runner container.
+- [ ] **`.github/workflows/sweep.yml` — executing, not yet green.** It has now
+      run on GitHub (all ten items red) and locally under `act`.
+
+      **"`act` cannot run this" was wrong, and it was mine.** The line that
+      stood here — "the oss-fuzz build needs docker inside the runner
+      container" — was written without trying it. act mounts the host docker
+      socket, so the build runs on the HOST daemon and works. Two real
+      adjustments were needed, both of the same shape: anything the build
+      container mounts must exist for the daemon that starts it, and act's
+      `$RUNNER_TEMP` and `$HOME` do not. `PGFUZZ_ACT_ROOT` points the roots and
+      the binary at one shared path; it is unset on a real runner.
+
+      Six defects have been found by running it, every one of them mine and
+      none visible without a run:
+      1. `reclaim disk` deleted `$AGENT_TOOLSDIRECTORY`, where setup-go had
+         just installed Go — exit 127.
+      2. `$HOME/.local/bin` did not exist and was not on `PATH`.
+      3. `bootstrap -shallow` could not reach the pinned oss-fuzz commit.
+      4. A duplicate build without `-no-pin`.
+      5. **An uppercase docker tag.** A workspace name becomes a docker
+         repository name, and `ci-REL_17_STABLE-address` is not lowercase.
+         This alone killed all ten items on GitHub.
+      6. **The workspace wipe could not wipe.** Container-written files are
+         root-owned, so `rm -rf` left a workspace behind and nothing checked.
+         A surviving build satisfying a later check is a false green, which is
+         the one failure this job exists to prevent.
 - [ ] **The disk arithmetic is from this host, not a runner.** ~8.5 GB per item
       against ~14 GB is measured locally (base-builder 3.15 GB, project layers
       ~0.3, shallow clone ~250 MB, export ~2.6 GB, address build 1.5 GB). It
       has not been observed on a GitHub runner.
-- [ ] **Artifact upload paths are guesses.** The globs for reproducers, series,
-      samples and build logs have never matched anything in a real run.
+- [x] **Artifact upload paths were guesses, and every one was wrong.** They
+      named `$PGFUZZ_WS/<ws>/artifacts/…`, the UNSEALED layout, while
+      `smoke.sh` runs `campaign -sealed -slug ci` and writes under
+      `campaigns/ci/ws/<ws>/`. Nothing matched — and with
+      `if-no-files-found: ignore`, a sweep that CRASHED would have uploaded no
+      reproducer and still gone green.
+
+      Checked against a real sealed campaign on this host rather than guessed
+      again, and split in two: reproducers may legitimately be empty
+      (`ignore`), the record may not (`error`). Note what `error` actually
+      buys — upload-artifact fails only when NO path matches, so it catches
+      "produced nothing at all", not "the manifest is missing". Per-file
+      assertions stay in `smoke.sh`.
 
 ## Left to build
 
