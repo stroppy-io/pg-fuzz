@@ -1013,6 +1013,14 @@ func cmdSweep(argv []string) int {
 			fmt.Fprintf(os.Stderr, "stopped %d container(s) started by this run\n", n)
 		}
 	}()
+	// ORPHANS FIRST. wslock catches two campaigns on the same workspace; it
+	// does not catch a fuzzer from a previous run still writing into one this
+	// sweep is about to measure. The shell's preflight was written after a
+	// monitor went unnoticed for 2d19h.
+	if err := refuseOrphans(); err != nil {
+		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+		return 2
+	}
 	// PREFLIGHT, the cheap tier: refuse to start below it rather than run into
 	// ENOSPC mid-corpus-write hours later. The floor that stops a RUNNING
 	// slice is armed separately, in the request.
@@ -5558,6 +5566,27 @@ const roundWindow = 12 * time.Hour
 //
 // Absent is fine and means every target gets the flat budget: the table is
 // produced by `corpus -autocap -tune-budget`, which not every host has run.
+// refuseOrphans stops a run starting on top of somebody else's containers.
+//
+// A failed docker read is a refusal, not a pass: reporting "no orphans"
+// because docker could not be reached is how a campaign starts on top of one.
+// -no-orphan-check overrides it deliberately.
+func refuseOrphans() error {
+	if os.Getenv("PGFUZZ_NO_ORPHAN_CHECK") == "1" {
+		return nil
+	}
+	orphans, err := fuzz.Orphans(func(pid int) bool {
+		return syscall.Kill(pid, 0) == nil
+	})
+	if err != nil {
+		return fmt.Errorf("%v -- pass PGFUZZ_NO_ORPHAN_CHECK=1 to start anyway", err)
+	}
+	if msg := fuzz.DescribeOrphans(orphans); msg != "" {
+		return fmt.Errorf("%s\n  or set PGFUZZ_NO_ORPHAN_CHECK=1", msg)
+	}
+	return nil
+}
+
 func loadBudgets(r paths.Roots) fuzz.Budgets {
 	home, err := r.NeedHome()
 	if err != nil {
