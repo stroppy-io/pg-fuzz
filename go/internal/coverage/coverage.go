@@ -39,6 +39,21 @@ type Summary struct {
 	Branches  Counted   `json:"branches"`
 	Files     int       `json:"files"`
 	FilesSeen int       `json:"files_entered"`
+
+	// Anchor is the binary the objects were taken from.
+	//
+	// THE SCOPE OF THE MEASUREMENT, and it was not recorded anywhere. The
+	// union merges every target's profile, but llvm-cov needs objects, and
+	// passing all 23 binaries would count the statically-linked backend once
+	// per binary in the denominator -- so one anchor is chosen and its
+	// DT_NEEDED libraries and the installed .so files go with it.
+	//
+	// The consequence is real and worth stating rather than hiding: a
+	// function linked ONLY into some other target -- the libpq-only ones,
+	// conninfo_fuzzer among them -- contributes profile counters but no
+	// object, so it drops out of the numerator AND the denominator. The
+	// percentage is honest for what it covers; this field says what that is.
+	Anchor string `json:"anchor,omitempty"`
 }
 
 // Counted is covered-of-total.
@@ -129,7 +144,11 @@ func Union(ctx context.Context, r UnionRequest) (Summary, error) {
 	if err := cmd.Run(); err != nil {
 		return Summary{}, fmt.Errorf("llvm-cov: %w\n%s", err, tailOf(buf.String(), 15))
 	}
-	return parseSummary(filepath.Join(r.Stage, "union-summary.json"), len(r.Profiles))
+	sum, err := parseSummary(filepath.Join(r.Stage, "union-summary.json"), len(r.Profiles))
+	// Which binary's objects the percentages are against. Without it a reader
+	// cannot tell what the denominator covers.
+	sum.Anchor = filepath.Base(obj)
+	return sum, err
 }
 
 // largestTarget picks the binary to report against.
