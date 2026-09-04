@@ -1119,7 +1119,8 @@ func cmdGate(argv []string) int {
 		logRoot = *logsDir
 	}
 	all := gatherRunLogs(logRoot)
-	runLogs := newestPerTarget(all)
+	// cmdGate applies its own -since below, so no window here.
+	runLogs := newestPerTarget(all, 0)
 	if *since > 0 {
 		cut := time.Now().Add(-*since)
 		var recent []string
@@ -1895,7 +1896,7 @@ func cmdRatchet(argv []string) int {
 		// One log per target. Only the NEWEST per target: the directory keeps
 		// every run, and summing them would credit this slice with every
 		// execution the target has ever done.
-		logsFound := newestPerTarget(perTarget)
+		logsFound := newestPerTarget(perTarget, 0)
 		// THE REGIME COMES FROM THE LOG here too. These logs carry the
 		// invocation just as a sweep log does, and taking it from the -jobs
 		// flag instead reported a two-worker campaign as jobs=1 -- comparing
@@ -3271,9 +3272,24 @@ func cmdBundle(argv []string) int {
 	m.GatesPass = true
 	if entries, err := os.ReadFile(filepath.Join(campDir, "live", "entries")); err == nil {
 		for _, ws := range strings.Fields(string(entries)) {
-			if code := runGateQuiet(r, ws, *baseline); code == 1 {
+			// A sealed campaign wrote under the slug; an unsealed one wrote in
+			// the workspace and has no such directory. Empty means "the
+			// workspace", which is runGateQuiet's own default.
+			logRoot := campaign.WSDir(campDir, ws)
+			if fi, err := os.Stat(logRoot); err != nil || !fi.IsDir() {
+				logRoot = ""
+			}
+			switch runGateQuiet(r, ws, *baseline, logRoot, roundWindow) {
+			case 1:
 				m.GatesPass = false
 				m.Add("gate:"+ws, false, "a gate failed for this workspace")
+			case 2:
+				// COULD NOT RUN IS NOT A PASS. This returned 2 for "no logs
+				// in the window" and the bundle read it as silence, so a
+				// campaign whose logs were somewhere else shipped
+				// "gates pass: true" having judged nothing.
+				m.GatesPass = false
+				m.Add("gate:"+ws, false, "the gates could not run: no logs in the window")
 			}
 		}
 	}
@@ -3447,7 +3463,19 @@ func cmdBundle(argv []string) int {
 }
 
 // runGateQuiet judges one workspace without printing.
-func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
+//
+// THIS IS THE VERDICT THAT SHIPS. bundle.Manifest records it as "gates pass",
+// inside the evidence somebody else re-checks the claim from, so it must be
+// the same judgement `pgfuzz gate` makes rather than a subset of it.
+//
+// It was neither. It ran three of the five checks -- no RoundComplete, no
+// FinalStats -- over every log the workspace had ever kept, with no window at
+// all. So it could read "no gate failed" over a round that ran 20 of 23
+// targets, and could read FAILED because of a dead log from weeks ago.
+//
+// logRoot is where THIS campaign wrote, which for a sealed run is not the
+// workspace.
+func runGateQuiet(r paths.Roots, ws, baselinePath, logRoot string, window time.Duration) int {
 	dir, c, _, err := openWS(ws)
 	if err != nil {
 		return 2
@@ -3461,7 +3489,10 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 		baselinePath = filepath.Join(home, "scripts", "ubsan-baseline.tsv")
 	}
 	accepted, _ := gate.LoadAccepted(baselinePath)
-	runLogs := gatherRunLogs(dir)
+	if logRoot == "" {
+		logRoot = dir
+	}
+	runLogs := newestPerTarget(gatherRunLogs(logRoot), window)
 	if len(runLogs) == 0 {
 		return 2
 	}
@@ -3471,20 +3502,40 @@ func runGateQuiet(r paths.Roots, ws, baselinePath string) int {
 	if pp, err := profilePaths(r, ""); err == nil {
 		starveAcks, _ = ratchet.LoadAcks(pp.Acks)
 	}
+	failed := false
+	var round []logs.Stats
+	var swept []string
 	for _, lg := range runLogs {
 		st, err := logs.ParseFile(lg)
 		if err != nil {
 			continue
 		}
 		st.Target = targetOf(lg)
+		round = append(round, st)
+		swept = append(swept, st.Target)
 		for _, v := range []gate.Verdict{
 			gate.Starvation(st, 10000, starveAcks), gate.SlowUnits(st),
 			gate.UBSan(st, c.Name, accepted),
 		} {
 			if v.Failed {
-				return 1
+				failed = true
 			}
 		}
+	}
+	// The two the bundle's verdict was missing. Both are about the round as a
+	// whole rather than one target, which is why judging log-by-log skipped
+	// them: whether the numbers can be believed at all, and whether every
+	// target that was built actually ran.
+	if v := gate.FinalStats(round, 90); v.Failed {
+		failed = true
+	}
+	if built, err := build.Targets(buildDir(dir, c, r)); err == nil {
+		if v := gate.RoundComplete(swept, built); v.Failed {
+			failed = true
+		}
+	}
+	if failed {
+		return 1
 	}
 	return 0
 }
@@ -4756,9 +4807,22 @@ func gatherRunLogs(dir string) []string {
 	return out
 }
 
-func newestPerTarget(paths []string) []string {
+// newestPerTarget keeps one log per target, optionally within a window.
+//
+// The window matters for a verdict: judging every log a workspace has ever
+// kept lets a dead target from weeks ago fail a healthy round, and a healthy
+// log from weeks ago pass a dead one. Zero means no window, which is right for
+// a human asking about a workspace and wrong for a gate judging a round.
+func newestPerTarget(paths []string, window time.Duration) []string {
+	cutoff := time.Time{}
+	if window > 0 {
+		cutoff = time.Now().Add(-window)
+	}
 	best := map[string]string{}
 	for _, p := range paths {
+		if !cutoff.IsZero() && mtime(p).Before(cutoff) {
+			continue
+		}
 		t := targetOf(p)
 		if cur, ok := best[t]; !ok || mtime(p).After(mtime(cur)) {
 			best[t] = p
