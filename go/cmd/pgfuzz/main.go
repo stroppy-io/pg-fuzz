@@ -1172,7 +1172,7 @@ func cmdGate(argv []string) int {
 		round = append(round, st)
 		for _, v := range []gate.Verdict{
 			gate.Starvation(st, *floor, starveAcks),
-			gate.SlowUnits(st),
+			gate.SlowUnitsIn(st, buildDir(dir, c, r)),
 			gate.UBSan(st, c.Name, accepted),
 		} {
 			if v.Failed {
@@ -3566,7 +3566,8 @@ func runGateQuiet(r paths.Roots, ws, baselinePath, logRoot string, window time.D
 		round = append(round, st)
 		swept = append(swept, st.Target)
 		for _, v := range []gate.Verdict{
-			gate.Starvation(st, 10000, starveAcks), gate.SlowUnits(st),
+			gate.Starvation(st, 10000, starveAcks),
+			gate.SlowUnitsIn(st, buildDir(dir, c, r)),
 			gate.UBSan(st, c.Name, accepted),
 		} {
 			if v.Failed {

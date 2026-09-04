@@ -25,9 +25,17 @@ func FreeGB(path string) (float64, error) {
 func NeedDisk(path string, wantGB float64, what string) error {
 	free, err := FreeGB(path)
 	if err != nil {
-		// Not fatal: an unreadable statfs is not evidence of a full disk, and
-		// refusing on it would be its own outage.
-		return nil
+		// FAIL CLOSED, as the shell did. `disk_free_gb` returning empty
+		// became ${f:-0} and died -- because this is the CHEAP tier: refusing
+		// to start costs a retry, and the thing it prevents is an ENOSPC
+		// hours later that truncates a corpus which took days to evolve.
+		//
+		// The running floor still fails open, and deliberately: killing a
+		// slice already in flight on a reading that could not be taken throws
+		// away work for no evidence. The two tiers differ here because their
+		// costs differ.
+		return fmt.Errorf("cannot read free space where %s writes (%v)"+
+			" -- refusing to start %s; pass -no-disk-check to override", path, err, what)
 	}
 	if free < wantGB {
 		return fmt.Errorf("%.1f GB free where %s writes, need %.0f GB for %s"+

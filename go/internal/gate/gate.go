@@ -15,7 +15,10 @@ package gate
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -111,14 +114,60 @@ func Starvation(s logs.Stats, floor int, acks map[string]string) Verdict {
 	return v
 }
 
+// optionsTimeout reads timeout= out of a libFuzzer .options file, or 0.
+//
+// The format is an INI with a [libfuzzer] section; only that section's keys
+// are libFuzzer flags, so a timeout under [asan] is not one.
+func optionsTimeout(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	inSection := false
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "["):
+			inSection = strings.EqualFold(line, "[libfuzzer]")
+			continue
+		case !inSection || line == "" || strings.HasPrefix(line, "#"):
+			continue
+		}
+		k, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != "timeout" {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
 // SlowUnits fails a run whose slowest unit outran the configured timeout.
 //
 // The timeout comes from the run itself, not a constant: the finding IS that
 // the configured and observed values disagree, and hardcoding one side of that
 // comparison hides exactly the case worth seeing.
 func SlowUnits(s logs.Stats) Verdict {
+	return SlowUnitsIn(s, "")
+}
+
+// SlowUnitsIn is SlowUnits with the build directory available.
+//
+// THE CONFIGURED TIMEOUT COMES FROM THE .options FILE FIRST.
+//
+// The shell read <target>.options, then -timeout= in the log, then 25. This
+// read only the log, so a workspace configured at timeout=60 was judged at 25
+// and cried wolf on every unit between the two. The finding IS that the
+// configured and the observed values disagree, so taking the configured one
+// from the weaker source undermines the comparison it exists to make.
+func SlowUnitsIn(s logs.Stats, buildDir string) Verdict {
 	v := Verdict{Name: "slow-units"}
 	limit := s.Timeout
+	if limit == 0 && buildDir != "" && s.Target != "" {
+		limit = optionsTimeout(filepath.Join(buildDir, s.Target+".options"))
+	}
 	if limit == 0 {
 		limit = 25
 	}
