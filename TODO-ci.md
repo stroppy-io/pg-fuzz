@@ -108,23 +108,40 @@ never been run is itself an unproven script.
 
 ## Found by the sweep, not a CI problem
 
-- [ ] **An empty `crash-` artifact is a leak report, not a crash.** The first
-      green sweep saved `crash-da39a3ee5e6b4b0d3255bfef95601890afd80709` for
-      two targets — `da39a3ee…` being the sha1 of the empty input. Nothing
-      crashed: LeakSanitizer runs its check at process EXIT and writes a
-      zero-byte "Test unit" for a leak that belongs to no input.
+- [ ] **An empty `crash-` artifact is a leak report with no reproducer.** The
+      first green sweep saved a zero-byte
+      `crash-da39a3ee5e6b4b0d3255bfef95601890afd80709` for two targets —
+      `da39a3ee…` being the sha1 of the empty input, verified. Nothing crashed:
+      LeakSanitizer's check runs at process exit, libFuzzer had no input to
+      attribute the leak to, and so it wrote the empty unit and named it
+      `crash-`.
 
-      `-detect_leaks=0` is already passed and does not prevent this: it is a
-      libFuzzer flag governing libFuzzer's own leak checks during fuzzing,
-      while LSan's at-exit check is an ASan runtime option (`ASAN_OPTIONS`).
+      `-detect_leaks=0` is already passed and does not prevent this. It is a
+      libFuzzer flag governing leak checks DURING fuzzing; LSan's at-exit
+      handler is an ASan runtime option (`ASAN_OPTIONS`).
 
-      It matters because an empty `crash-` file is indistinguishable from a
-      real reproducer to everything downstream — the artifact count, the
-      upload, and whoever triages it. The report already says "an artifact is
-      not a finding"; this is a case where the artifact is not even an
-      artifact. Decide whether to set `ASAN_OPTIONS=detect_leaks=0` for these
-      slices or to name leak-at-exit artifacts differently, but they should
-      not be called `crash-`.
+      **The leaks themselves are two different things, and only one is real.**
+      Two targets of 23 report anything, and the 95 reports split as:
+
+      - `__interceptor_strdup`/`malloc` → `curl_slist_append` → `http_request`,
+        60 of them, all in `extension_funcs_fuzzer`. That is **pgsql-http**, a
+        curl slist that is not freed, and it looks like a genuine plugin leak.
+        Worth reporting upstream once confirmed outside the fuzzer.
+      - `AllocSetContextCreateInternal` under `ExecHashTableCreate`,
+        `tuplesort_begin_common`, `spi_dest_startup`,
+        `CreateExprContextInternal`, `CreateExecutorState`, `hash_create`,
+        `SPI_connect_ext` — the rest. These are PostgreSQL memory contexts,
+        released by context reset at transaction end rather than by `free()`,
+        so LSan calls them leaks whenever a fuzzer exits mid-transaction. Not
+        defects.
+
+      Two problems wearing one filename: a plausible pgsql-http leak, and an
+      artifact that misdescribes itself. The naming is the CI-relevant half —
+      an empty `crash-` file is indistinguishable from a real reproducer to the
+      artifact count, the upload, and whoever triages it, and the report
+      already has to explain that an artifact is not a finding. Either set
+      `ASAN_OPTIONS=detect_leaks=0` for these slices, or name a leak-at-exit
+      artifact for what it is; it should not be called `crash-`.
 
 ## Left to build
 
