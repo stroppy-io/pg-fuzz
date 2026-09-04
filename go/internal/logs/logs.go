@@ -125,10 +125,26 @@ func Parse(r io.Reader) Stats {
 			strings.Contains(line, "INFO: Loaded ") {
 			s.Banner = true
 		}
-		// libFuzzer's own words, matched exactly. A target that says either of
-		// these did not fuzz, and no floor or acknowledgement changes that.
-		if strings.Contains(line, "a leak has been found in the initial corpus") ||
-			strings.Contains(line, "no interesting inputs were found") {
+		// libFuzzer's own words, and the ERROR PREFIX IS PART OF THEM.
+		//
+		// The comment here used to say "matched exactly" and the code did not.
+		// libFuzzer prints a WARNING with almost the same wording whenever the
+		// seed corpus is small:
+		//
+		//	WARNING: no interesting inputs were found so far. Is the code
+		//	instrumented for coverage?
+		//
+		// It then fuzzes perfectly well. A bare Contains matched that warning,
+		// so numeric_fuzzer -- 204,128 executions, two workers, both finishing
+		// -- was reported as "libFuzzer aborted on the initial corpus, it never
+		// fuzzed" and failed a healthy sweep item. Any target with a one-file
+		// seed corpus could trip it, on any run.
+		//
+		// The fatal forms both carry "ERROR: libFuzzer: ". The warning does
+		// not, which is the whole difference between a target that died and a
+		// target that had not found anything YET.
+		if strings.Contains(line, "ERROR: libFuzzer: a leak has been found in the initial corpus") ||
+			strings.Contains(line, "ERROR: libFuzzer: no interesting inputs were found") {
 			s.Aborted = true
 		}
 		// NOT the INITED line. "#1000 INITED" is where the corpus REPLAY

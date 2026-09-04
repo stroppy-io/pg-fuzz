@@ -40,3 +40,37 @@ func TestInitedAloneIsNotProgress(t *testing.T) {
 		t.Errorf("Startup = %v, want inited", s.Startup())
 	}
 }
+
+// A WARNING IS NOT AN ABORT. libFuzzer prints
+//
+//	WARNING: no interesting inputs were found so far. Is the code instrumented...
+//
+// whenever the seed corpus is small, and then fuzzes normally. A bare substring
+// match on "no interesting inputs were found" caught it, so numeric_fuzzer --
+// 204,128 executions across two finishing workers -- was reported as having
+// aborted on its initial corpus and failed a healthy sweep item. Any target
+// with a one-file seed corpus could trip it on any run.
+func TestStartupWarningIsNotAnAbort(t *testing.T) {
+	healthy := "INFO: seed corpus: files: 1 min: 21b max: 21b total: 21b rss: 65Mb\n" +
+		"#1\tINITED exec/s: 0 rss: 65Mb\n" +
+		"WARNING: no interesting inputs were found so far. Is the code instrumented for coverage?\n" +
+		"#204128\tDONE cov: 900 ft: 2000 corp: 100/1000b\n" +
+		"Done 204128 runs in 31 second(s)\n"
+	s := Parse(strings.NewReader(healthy))
+	if s.Aborted {
+		t.Error("a startup WARNING must not read as an abort")
+	}
+	if s.Execs != 204128 {
+		t.Errorf("Execs = %d, want 204128", s.Execs)
+	}
+
+	// The fatal forms still count, prefix and all.
+	for _, fatal := range []string{
+		"==1==ERROR: libFuzzer: no interesting inputs were found\n",
+		"==1==ERROR: libFuzzer: a leak has been found in the initial corpus\n",
+	} {
+		if !Parse(strings.NewReader(fatal)).Aborted {
+			t.Errorf("must still recognise the abort: %q", fatal)
+		}
+	}
+}
