@@ -11,6 +11,7 @@
 #
 #   scripts/ci.sh          run every job
 #   scripts/ci.sh test     run one: test | wiring | harness
+#   scripts/ci.sh sweep    run the sweep workflow locally, under act
 #
 # Exit 0 only if everything a reviewer would check passes.
 set -uo pipefail
@@ -91,6 +92,41 @@ job_wiring() {
 		|| bad "a documented command is unreachable"
 }
 
+# THE SWEEP WORKFLOW, RUN LOCALLY.
+#
+# Not part of `all` -- it builds PostgreSQL and takes half an hour. It exists
+# because I did not do this, and it cost four consecutive red runs.
+#
+# I had act installed and pointed it only at ci.yml, on the reasoning that the
+# sweep needs docker inside the runner container and so could not work here.
+# That is true of the BUILD step, which is roughly the seventh. All four
+# defects were in the first six -- a reclaim step that deleted the Go toolchain
+# setup-go had just installed, a binary built into a directory that does not
+# exist, a shallow clone that could not reach the pinned commit, and a
+# duplicate build without -no-pin. Every one is plain shell, git and Go, and
+# every one would have surfaced here in about two minutes.
+#
+# "The last step cannot run locally" is not a reason to skip the first six.
+# Absence of a signal is not absence of a problem.
+job_sweep() {
+	say "sweep (under act)"
+	local act
+	act=$(command -v act || echo "$HOME/.local/share/mise/installs/act/latest/act")
+	if [ ! -x "$act" ]; then
+		echo "   skipped: act not installed (mise use -g act@latest)"
+		return
+	fi
+	# One matrix item is enough to exercise the scaffolding; ten would only
+	# repeat it. The docker socket is mounted so the build can at least start.
+	if "$act" -j sweep -W .github/workflows/sweep.yml \
+		--matrix ref:REL_17_STABLE --matrix sanitizer:address \
+		--container-daemon-socket /var/run/docker.sock; then
+		ok "the sweep workflow ran"
+	else
+		bad "the sweep workflow failed under act"
+	fi
+}
+
 # The harnesses are C compiled inside OSS-Fuzz's image, which this does not
 # have. A syntax check still catches the class of mistake that survives review.
 job_harness() {
@@ -130,8 +166,9 @@ case "${1:-all}" in
 	test)    need_go; job_test ;;
 	wiring)  need_go; job_wiring ;;
 	harness) job_harness ;;
+	sweep)   job_sweep ;;
 	all)     need_go; job_test; job_wiring; job_harness ;;
-	*)       echo "usage: scripts/ci.sh [all|test|wiring|harness]" >&2; exit 2 ;;
+	*)       echo "usage: scripts/ci.sh [all|test|wiring|harness|sweep]" >&2; exit 2 ;;
 esac
 
 echo
