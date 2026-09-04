@@ -139,7 +139,10 @@ func Fingerprint(in FingerprintInputs) (string, error) {
 	ws := append([]string(nil), in.Workspaces...)
 	sort.Strings(ws)
 	for _, w := range ws {
-		bi := filepath.Join(in.OSSFuzz, "build", "out", "pgfuzz-"+w, "BUILD-INFO.json")
+		// THE WORKSPACE'S OWN BUILD. The shared symlink is repointed by
+		// whichever workspace built last, so hashing through it fingerprints
+		// somebody else's binaries -- or nothing at all when it dangles.
+		bi := filepath.Join(buildOutFor(in.OSSFuzz, in.WSRoot, w), "BUILD-INFO.json")
 		if b, err := os.ReadFile(bi); err == nil {
 			var j struct {
 				PGRefSHA string            `json:"pg_ref_sha"`
@@ -251,4 +254,41 @@ func hexShort(b []byte, n int) string {
 		return s[:n]
 	}
 	return s
+}
+
+// buildOutFor resolves one workspace's build directory the way a run does.
+//
+// NOT THE SHARED SYMLINK. `<oss-fuzz>/build/out/<project>` is one path that
+// every workspace's build points at in turn, which is why runs and coverage
+// resolve `<ws>/builds/<key>` first. The archive, the fingerprint and the
+// inventory all joined the shared path directly, with the project prefix
+// hardcoded as "pgfuzz-"+ws rather than read from the workspace's own conf.
+//
+// So a symlink another workspace had repointed produced a manifest with the
+// WRONG fuzzer hashes, and a dangling one produced a manifest with no hashes
+// and no BUILD-INFO at all -- silently, where the shell's build-sync check
+// called it a failure.
+//
+// Kept here rather than imported from internal/build so the dependency does
+// not run backwards: build produces what archive records.
+func buildOutFor(ossFuzz, wsRoot, ws string) string {
+	conf := map[string]string{}
+	if b, err := os.ReadFile(filepath.Join(wsRoot, ws, "workspace.conf")); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+				conf[k] = v
+			}
+		}
+	}
+	if k := conf["key"]; k != "" {
+		p := filepath.Join(wsRoot, ws, "builds", k)
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p
+		}
+	}
+	project := conf["project"]
+	if project == "" {
+		project = "pgfuzz-" + ws
+	}
+	return filepath.Join(ossFuzz, "build", "out", project)
 }

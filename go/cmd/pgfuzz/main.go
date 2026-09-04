@@ -2487,7 +2487,7 @@ func cmdCensus(argv []string) int {
 		// name alone cannot be rechecked against anything.
 		var prov []census.Build
 		for _, ws := range wss {
-			bi := archive.BuildInfoOf(r.OSSFuzz(), ws)
+			bi := archive.BuildInfoOf(r.OSSFuzz(), r.WS, ws)
 			if bi.PGRefSHA == "" {
 				continue
 			}

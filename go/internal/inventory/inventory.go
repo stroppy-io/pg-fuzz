@@ -26,6 +26,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"pgfuzz/internal/build"
 
 	"path/filepath"
 	"pgfuzz/internal/archive"
@@ -111,7 +112,12 @@ func Collect(r Roots) Report {
 	// ---- 4. per workspace: SUT, patches, plugins, binaries ---------------
 	for _, ws := range r.Targets {
 		c := readConf(filepath.Join(r.WSRoot, ws, "workspace.conf"))
-		bi := readBuildInfo(filepath.Join(r.OSSFuzz, "build", "out", "pgfuzz-"+ws, "BUILD-INFO.json"))
+		// THE WORKSPACE'S OWN BUILD, not the shared symlink another
+		// workspace's build repoints. The project name comes from the conf
+		// rather than a hardcoded "pgfuzz-" prefix.
+		wsOut := build.Out(r.OSSFuzz, filepath.Join(r.WSRoot, ws),
+			c["key"], projectOf(c, ws))
+		bi := readBuildInfo(filepath.Join(wsOut, "BUILD-INFO.json"))
 
 		add(ws, "PostgreSQL "+or(c["ref"], "?"), "git commit",
 			or(bi.PGRefSHA, Unreadable),
@@ -144,7 +150,7 @@ func Collect(r Roots) Report {
 				"created from the vendor patch / contrib; no independent hash", false)
 		}
 
-		outdir := filepath.Join(r.OSSFuzz, "build", "out", "pgfuzz-"+ws)
+		outdir := wsOut
 		bins, _ := filepath.Glob(filepath.Join(outdir, "*_fuzzer"))
 		sort.Strings(bins)
 		n := 0
@@ -228,6 +234,19 @@ func clangRevision(ossfuzz string) string {
 		}
 	}
 	return Unreadable
+}
+
+// projectOf is the workspace's project name, from its conf when it has one.
+//
+// The prefix was hardcoded as "pgfuzz-"+ws everywhere that read a build
+// directly, so a workspace whose conf names a different project was looked up
+// under a path that does not exist -- and came back empty rather than wrong,
+// which is harder to notice.
+func projectOf(c map[string]string, ws string) string {
+	if p := c["project"]; p != "" {
+		return p
+	}
+	return "pgfuzz-" + ws
 }
 
 // readConf parses workspace.conf. LAST assignment wins, matching how the shell

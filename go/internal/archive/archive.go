@@ -57,10 +57,10 @@ type Harness struct {
 //
 // 172ms per 58MB binary, about four seconds for a full edition -- the cost is
 // nothing against being able to say what actually ran.
-func FuzzerHashes(ossfuzz string, workspaces []string) map[string]map[string]string {
+func FuzzerHashes(ossfuzz, wsRoot string, workspaces []string) map[string]map[string]string {
 	out := map[string]map[string]string{}
 	for _, ws := range workspaces {
-		dir := filepath.Join(ossfuzz, "build", "out", "pgfuzz-"+ws)
+		dir := buildOutFor(ossfuzz, wsRoot, ws)
 		bins, _ := filepath.Glob(filepath.Join(dir, "*_fuzzer"))
 		sort.Strings(bins)
 		rows := map[string]string{}
@@ -114,10 +114,10 @@ func isReproducer(name string) bool {
 //
 // Verbatim, not re-modelled: the archive's job is to preserve what the build
 // recorded, and a struct here would silently drop any field added later.
-func Builds(ossfuzz string, workspaces []string) map[string]json.RawMessage {
+func Builds(ossfuzz, wsRoot string, workspaces []string) map[string]json.RawMessage {
 	out := map[string]json.RawMessage{}
 	for _, ws := range workspaces {
-		p := filepath.Join(ossfuzz, "build", "out", "pgfuzz-"+ws, "BUILD-INFO.json")
+		p := filepath.Join(buildOutFor(ossfuzz, wsRoot, ws), "BUILD-INFO.json")
 		if b, err := os.ReadFile(p); err == nil && json.Valid(b) {
 			out[ws] = json.RawMessage(b)
 		}
@@ -197,9 +197,9 @@ func NewManifest(slug, stamp, fp, repo, ossfuzz, wsRoot string, workspaces []str
 		Workspaces:  workspaces,
 		Corpus:      map[string]CorpusNote{},
 		Harness:     Harness{HarnessHash(repo), HarnessCommit(repo)},
-		Fuzzers:     FuzzerHashes(ossfuzz, workspaces),
+		Fuzzers:     FuzzerHashes(ossfuzz, wsRoot, workspaces),
 		Reproducers: ReproducerCounts(wsRoot, workspaces),
-		Builds:      Builds(ossfuzz, workspaces),
+		Builds:      Builds(ossfuzz, wsRoot, workspaces),
 	}
 }
 
@@ -265,6 +265,6 @@ func ReadBuildInfo(path string) BuildInfo {
 // Most of these refs move between campaigns -- origin/REL_*_STABLE,
 // origin/master, the OrioleDB flavors resolved through .pgtags -- so
 // "pg17-head-add" names a different tree every time a campaign rebuilds.
-func BuildInfoOf(ossfuzz, ws string) BuildInfo {
-	return ReadBuildInfo(filepath.Join(ossfuzz, "build", "out", "pgfuzz-"+ws, "BUILD-INFO.json"))
+func BuildInfoOf(ossfuzz, wsRoot, ws string) BuildInfo {
+	return ReadBuildInfo(filepath.Join(buildOutFor(ossfuzz, wsRoot, ws), "BUILD-INFO.json"))
 }
