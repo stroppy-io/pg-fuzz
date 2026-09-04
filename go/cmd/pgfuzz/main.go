@@ -769,7 +769,7 @@ func cmdBuild(argv []string) int {
 		Sanitizer: useSan,
 		Engine:    useEng,
 		Env:       build.EnvFor(conf),
-		Stream:    os.Stderr,
+		Stream:    build.Filter(os.Stderr),
 		Timeout:   *timeout,
 		// The log and its timing, kept beside the workspace as the shell did.
 		// A failed build is the one whose log somebody needs, and it was
@@ -970,7 +970,7 @@ func requestFor(dir string, c workspace.Conf, r paths.Roots, target string, secs
 		MaxLen:    maxLen,
 		Sanitizer: c.Sanitizer,
 		Lineage:   os.Getenv("PGFUZZ_LINEAGE_ON") != "0",
-		Stream:    os.Stderr,
+		Stream:    build.Filter(os.Stderr),
 		// The running floor. A sweep writes corpus continuously too.
 		StopFreeGB: fuzz.DefaultStopFreeGB,
 	}
@@ -1946,7 +1946,7 @@ func cmdCoverage(argv []string) int {
 				Out:       buildDir(dir, c, r),
 				Sanitizer: c.Sanitizer,
 				MinFreeGB: *minFree, StopFreeGB: *stopFree,
-				Stream: os.Stderr,
+				Stream: build.Filter(os.Stderr),
 			})
 			if err != nil {
 				// Said out loud and counted. A target whose measurement was

@@ -94,7 +94,7 @@ func cmdRegress(argv []string) int {
 	}
 
 	res, err := build.Regress(ctx, build.RegressRequest{
-		Src: src, Work: *work, Image: *image, Stream: os.Stderr,
+		Src: src, Work: *work, Image: *image, Stream: build.Filter(os.Stderr),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)

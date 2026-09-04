@@ -249,11 +249,20 @@ never been run is itself an unproven script.
       main is a real bill and the campaign config is moving to its own repo
       anyway. Options: leave it manual, add push-to-main, or nightly.
 
-- [ ] **GitHub truncates the smoke step log.** `build.sh` runs under `set -x`
-      and floods it, so a failing item cannot be diagnosed from the web log at
-      all — every diagnosis in this file came from the uploaded artifacts
-      instead. That is why the record upload mattered more than it looked, and
-      it is still worth quietening the trace.
+- [x] **GitHub no longer truncates the smoke step log.** oss-fuzz runs build.sh
+      under shell tracing and PostgreSQL's make echoes every compiler
+      invocation, so one item emitted 3.5 MB and the step was cut off long
+      before the failure — every diagnosis in this file had to come from the
+      uploaded artifacts instead.
+
+      `build.Filter` thins the LIVE copy only: shell xtrace and compiler
+      command lines go, build.sh's own messages, configure's checks, warnings
+      and errors stay. Measured on a real build log from the green run:
+      3,472 KB to 413 KB, 88% of it noise. Safe by construction — Fuzzers()
+      tees into a buffer written to build.log whole, pass or fail, and the
+      failure path already prints interesting() plus that path, so nothing
+      dropped here is lost. An error line is never dropped whatever it looks
+      like, which is the one rule that makes the rest of it defensible.
 
 ## Deliberately not in CI
 
