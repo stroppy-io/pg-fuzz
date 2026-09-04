@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"pgfuzz/internal/term"
 	"strings"
 	"testing"
 	"time"
@@ -34,5 +35,45 @@ func TestElapsedFinishedCampaign(t *testing.T) {
 	}
 	if got := headerClock(m); !strings.Contains(got, "elapsed 2h00m") {
 		t.Errorf("headerClock = %q, want elapsed 2h00m", got)
+	}
+}
+
+// A SNAPSHOT CLAIMS NO SELECTION, and does not depend on a code GitHub's log
+// viewer is undocumented for. Reverse video marks the row the arrow keys are
+// on; in a log there are no arrow keys, so the highlight asserts a state that
+// cannot exist. Everything else in the frame degrades gracefully if a viewer
+// ignores it -- an unsupported dim is still readable text.
+func TestSnapshotDropsSelectionAndKeys(t *testing.T) {
+	m := Model{
+		Slug: "ci", Phase: "SWEEPING",
+		Rows: []Row{{Name: "ci-rel_17_stable-undefined"}},
+		Err:  "docker unreachable",
+	}
+	draw := func(snap bool) string {
+		m.Snapshot = snap
+		var s term.Screen
+		s.Plain = true
+		Draw(&s, m, Grid, 0, 24, 200)
+		return s.Text()
+	}
+
+	live := draw(false)
+	if !strings.Contains(live, term.Reverse) {
+		t.Error("an interactive frame must still highlight the selected row")
+	}
+	if !strings.Contains(live, "q quit") {
+		t.Error("an interactive frame must still show the keys")
+	}
+
+	snap := draw(true)
+	if strings.Contains(snap, term.Reverse) {
+		t.Error("a snapshot must not claim a selection")
+	}
+	if strings.Contains(snap, "q quit") {
+		t.Error("a snapshot must not offer keys nobody can press")
+	}
+	// The half of the footer that still matters does print.
+	if !strings.Contains(snap, "docker unreachable") {
+		t.Error("a snapshot must still report what went wrong reading docker")
 	}
 }

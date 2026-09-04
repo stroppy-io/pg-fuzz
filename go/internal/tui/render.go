@@ -180,7 +180,14 @@ func drawGrid(s *term.Screen, m Model, sel int) int {
 		var b strings.Builder
 		// The SELECTED row, distinct from the "> " live marker. j/k and the
 		// arrows moved a selection nothing drew, so the keys looked broken.
-		if i == sel {
+		//
+		// NOT IN A SNAPSHOT. Nothing can be selected on a page in a log, so a
+		// highlighted row claims a state that does not exist -- and reverse
+		// video is the one code here that GitHub's viewer is not documented to
+		// support, which would make the claim look broken as well as be wrong.
+		// Everything else in this frame degrades gracefully: an unsupported
+		// dim renders as plain text and is still readable.
+		if i == sel && !m.Snapshot {
 			b.WriteString(term.Reverse)
 		}
 		// "> " marks the workspace that is working, so the eye finds it
