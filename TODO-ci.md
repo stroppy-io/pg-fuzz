@@ -36,12 +36,29 @@ never been run is itself an unproven script.
 
 ## Written but NOT yet proven
 
-- [ ] **`scripts/smoke.sh` green.** The pipeline end to end with the budgets
-      turned down: campaign (sealed, rounds, deadline) → gates → report →
-      index → bundle → census → inventory → breakdown. Its first run failed
-      four steps and found three real things (a wrong flag in my script, the
-      pin refusing a moved branch, `breakdown` exiting 2 on an empty workspace,
-      which is correct and the script had to accept). Re-running.
+- [ ] **`scripts/smoke.sh` green.** Four runs so far, each finding something
+      real, and every failure was the tool being correct:
+      - a wrong flag of mine (`-o` for `-out`);
+      - the PG pin refusing a moved branch — right for a campaign, noise for a
+        smoke run, hence `campaign -no-pin`;
+      - `breakdown` exiting 2 on a workspace with no crashes — correct by this
+        project's rule that absence is never a pass, so the script accepts it;
+      - starvation at 8,544 executions against a floor of 10,000 — an
+        eight-second slice genuinely starves, so the smoke uses a floor of 100:
+        low enough for anything that ran, high enough to still fail a target
+        that executed nothing;
+      - `simple_query_fuzzer` spending its whole slice on corpus replay, which
+        killed a flag I had just added (see below);
+      - `round-complete` firing because a 7-minute campaign cannot finish a
+        23-target round, so the clock went to 0.35h for two complete rounds.
+      Fifth run in progress.
+
+      **A flag removed, not kept.** I added `-no-budgets` to skip the 150s and
+      200s floors on the two slow targets. Skipping them *creates* the
+      condition the replay gate exists to catch — the budget and the gate
+      encode one fact from opposite sides. An escape hatch that manufactures
+      the failure it avoids is the dead surface this audit spent two days
+      deleting, so it is gone and the budgets stay on.
 - [ ] **`.github/workflows/sweep.yml` has never executed.** This is the largest
       open risk on this page. It is a 10-item matrix (pg16–19 + master ×
       address/undefined) and nothing has run it, here or on GitHub. `act`
@@ -55,16 +72,13 @@ never been run is itself an unproven script.
 
 ## Left to build
 
-- [ ] **Make `sweep.yml` call `scripts/smoke.sh`**, as `ci.yml` calls
-      `ci.sh`. It currently inlines the steps, which is the same
-      two-statements-of-one-fact problem that made the Go version skew.
-- [ ] **A coverage SHAPE check.** Magnitude is a time-function and not worth
-      chasing in a smoke run; shape is constant and worth checking every time.
-      Every coverage defect fixed this week was a shape defect — `-measure` and
-      `-union` reading different directories, the union's anchor binary, the
-      per-component export having readers and no writer. One coverage-sanitizer
-      item that measures a single target and asserts the summary carries all
-      four counters and the union merges the profiles just written.
+- [x] **`sweep.yml` calls `scripts/smoke.sh`**, as `ci.yml` calls `ci.sh`.
+- [x] **A coverage SHAPE check** — `scripts/smoke-coverage.sh`. Written, not
+      yet run. It asserts that a measurement produces all four counters with
+      non-zero denominators, that the union can see the profiles the
+      measurement just wrote, and that it names the anchor its percentages are
+      against. All three defects it checks for were live this week and all
+      three were invisible to a percentage.
 - [ ] **Decide whether `pgfuzz regress` belongs in CI.** It builds a whole
       second PostgreSQL and runs `make check` — verified working here, 225
       tests passing, but ~40 minutes. Probably one item, not ten.
@@ -85,7 +99,11 @@ never been run is itself an unproven script.
 
 ## Elsewhere, not CI
 
-- [ ] README contributing section.
-- [ ] Push. 101 commits sit on local `main`; `gh` is authenticated now, the
-      remote has never been pushed to from here, and a force-push over
-      pre-squash history needs a deliberate decision.
+- [x] README contributing section.
+- [ ] **Push the CI commits.** The 101 fix commits are already on the remote
+      (pushed 2026-09-04 10:24), so this is a fast-forward and no force is
+      needed. It is blocked on one thing: the `gh` OAuth token has no
+      `workflow` scope, so it may not write `.github/workflows/`. One
+      interactive command unblocks it:
+
+          gh auth refresh -h github.com -s workflow
