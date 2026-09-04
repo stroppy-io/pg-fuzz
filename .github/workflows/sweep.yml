@@ -81,23 +81,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ~25 GB of preinstalled toolchains this never uses. The margin without
+      # it is about 5 GB, which is not a margin.
+      #
+      # BEFORE setup-go, AND NOT TOUCHING THE TOOL CACHE. The first run of this
+      # workflow put this step after setup-go and deleted
+      # $AGENT_TOOLSDIRECTORY -- which is exactly where setup-go had just
+      # installed Go. All ten items died with exit 127, "go: command not
+      # found", having reclaimed the thing they needed.
+      - name: reclaim disk
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/lib/jvm || true
+          docker image prune -af >/dev/null 2>&1 || true
+          df -h / | tail -1
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go/go.mod
           cache: false
 
-      # ~25 GB of preinstalled toolchains this never uses. The margin without
-      # it is about 5 GB, which is not a margin.
-      - name: reclaim disk
-        run: |
-          df -h / | tail -1
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost /usr/lib/jvm "$AGENT_TOOLSDIRECTORY" || true
-          docker image prune -af >/dev/null 2>&1 || true
-          df -h / | tail -1
-
+      # Into a directory that exists, and onto PATH for every later step --
+      # neither of which was true the first time this ran.
       - name: build pgfuzz
-        run: cd go && go build -o "$HOME/.local/bin/pgfuzz" ./cmd/pgfuzz
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          (cd go && go build -o "$HOME/.local/bin/pgfuzz" ./cmd/pgfuzz)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/pgfuzz" 2>&1 | head -2
 
       - name: roots
         run: |
