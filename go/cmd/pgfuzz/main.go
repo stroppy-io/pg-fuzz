@@ -98,7 +98,7 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz plateau -w <ws> [-w <ws>...] [-window M] [-once]
   pgfuzz tidy   [-apply] [-min-mb N] [-docker]
   pgfuzz plugins -f plugins.tsv [name...]
-  pgfuzz inventory [-w <ws>...] [-json]
+  pgfuzz inventory [-w <ws>...] [-json] [-drift]
   pgfuzz triage-report [-o FILE] [-check] [-family F] [-note TEXT]
   pgfuzz redgreen -root <pg-fuzz> [-green] [-case ID]
   pgfuzz triage -w <ws> -t <target> -verdict V <artifact>
@@ -4160,6 +4160,8 @@ func productivity(r paths.Roots, entries []campaign.Entry) map[string]map[string
 
 func cmdInventory(argv []string) int {
 	fs := flag.NewFlagSet("inventory", flag.ExitOnError)
+	drift := fs.Bool("drift", false,
+		"compare the named workspaces and exit 1 if they are not the same tree")
 	var wss wsList
 	fs.Var(&wss, "w", "workspace (repeatable)")
 	asJSON := fs.Bool("json", false, "machine-readable")
@@ -4183,6 +4185,33 @@ func cmdInventory(argv []string) int {
 			}
 		}
 	}
+	if *drift {
+		// THE EDITIONS OF ONE TREE, compared. A campaign's workspaces are
+		// meant to be the same source built three ways; when they are not,
+		// nothing failed and the coverage numbers sat beside the corpus
+		// numbers in one report describing two different programs.
+		var eds []inventory.Edition
+		for _, ws := range wss {
+			bi := archive.BuildInfoOf(r.OSSFuzz(), r.WS, ws)
+			eds = append(eds, inventory.Edition{
+				Workspace: ws,
+				PGSHA:     bi.PGRefSHA,
+				Patches:   workspacePatches(r.WS, ws),
+				Plugins:   bi.Plugins,
+			})
+		}
+		ds := inventory.DriftIn(eds)
+		if len(ds) == 0 {
+			fmt.Printf("%d workspace(s) are the same tree\n", len(wss))
+			return 0
+		}
+		for _, d := range ds {
+			fmt.Println(d)
+		}
+		fmt.Printf("\n%d difference(s) -- these are not editions of one tree\n", len(ds))
+		return 1
+	}
+
 	rep := inventory.Collect(inventory.Roots{
 		Repo: r.Home, OSSFuzz: r.OSSFuzz(), WSRoot: r.WS, Targets: wss,
 	})
