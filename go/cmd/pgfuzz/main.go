@@ -941,6 +941,7 @@ func cmdRun(argv []string) int {
 		return 2
 	}
 	reportSlice(*target, res)
+	recordSlice(dir, c, campaign.RunID("run", time.Now()), res, *jobs)
 	return 0
 }
 
@@ -964,6 +965,38 @@ func requestFor(dir string, c workspace.Conf, r paths.Roots, target string, secs
 		Stream:    os.Stderr,
 		// The running floor. A sweep writes corpus continuously too.
 		StopFreeGB: fuzz.DefaultStopFreeGB,
+	}
+}
+
+// recordSlice writes a slice into the workspace's own series.
+//
+// A RUN OUTSIDE A CAMPAIGN LEFT NO RECORD AT ALL. The shell wrote a worklog
+// entry per run -- ref and sha, the exact command, executions, corpus before
+// and after, the reproducer count, the log path, and DIED-AT-STARTUP when it
+// did -- and the equivalent at the end of a sweep. The port printed
+// reportSlice to stdout and wrote nothing, so the exec count, the ref it ran
+// against and the corpus delta existed only in scrollback.
+//
+// The same Slice shape a campaign writes, into <ws>/series.jsonl, so
+// everything that reads a series -- the ratchet, the census, the reports --
+// can read these too.
+func recordSlice(dir string, c workspace.Conf, runID string, res fuzz.Result, jobs int) {
+	st, _ := logs.ParseFile(res.LogPath)
+	sl := campaign.Slice{
+		RunID: runID, Workspace: c.Name, Target: res.Target,
+		Started: time.Now().UTC().Format(time.RFC3339),
+		Seconds: int(res.Elapsed.Seconds()), Jobs: jobs,
+		Execs: st.Execs, NewUnits: st.NewUnits, Cov: st.Cov, Ft: st.Ft,
+		Corpus: res.CorpusTo, CorpusBefore: res.CorpusFrom,
+		Artifacts: res.NewArtifacts(), Dict: res.Dict,
+		Alive:    st.Startup() == logs.Fuzzed,
+		DiskStop: res.DiskStop, Hung: res.Hung,
+	}
+	series := campaign.Series{Path: filepath.Join(dir, "series.jsonl")}
+	if err := series.Append(sl); err != nil {
+		// Said, not swallowed: a run whose record could not be written is a
+		// run nothing downstream will know happened.
+		fmt.Fprintf(os.Stderr, "pgfuzz: could not record the slice: %v\n", err)
 	}
 }
 
@@ -1038,6 +1071,9 @@ func cmdSweep(argv []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// One run id for the whole sweep, so its slices group as one round the
+	// way a campaign's do.
+	sweepRun := campaign.RunID("sweep", time.Now())
 	sr := fuzz.SweepRequest{
 		Request: requestFor(dir, c, r, "", *secs, *jobs),
 		Targets: targets,
@@ -1045,7 +1081,15 @@ func cmdSweep(argv []string) int {
 		OnStart: func(t string, i, n int) {
 			fmt.Fprintf(os.Stderr, "\n---- %s ----  (%d/%d)\n", t, i, n)
 		},
-		OnDone: func(t string, res fuzz.Result) { reportSlice(t, res) },
+		OnDone: func(t string, res fuzz.Result) {
+			reportSlice(t, res)
+			if res.Err == nil {
+				// A slice that never ran writes no row: execs 0, alive false
+				// is a measurement, and a ratchet reading it sees a target
+				// that collapsed rather than a container that failed to start.
+				recordSlice(dir, c, sweepRun, res, *jobs)
+			}
+		},
 	}
 	if *deadline > 0 {
 		sr.Deadline = time.Now().Add(*deadline)
