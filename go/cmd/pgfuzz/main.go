@@ -991,6 +991,7 @@ func recordSlice(dir string, c workspace.Conf, runID string, res fuzz.Result, jo
 		Artifacts: res.NewArtifacts(), Dict: res.Dict,
 		Alive:    st.Startup() == logs.Fuzzed,
 		DiskStop: res.DiskStop, Hung: res.Hung,
+		PeakRSS: st.PeakRSS,
 	}
 	series := campaign.Series{Path: filepath.Join(dir, "series.jsonl")}
 	if err := series.Append(sl); err != nil {

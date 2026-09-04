@@ -88,6 +88,16 @@ type Slice struct {
 	// produced few executions because it was stuck on one input is a
 	// different fact from one that was simply slow.
 	Hung bool `json:"hung,omitempty"`
+
+	// PeakRSS is the highest resident size libFuzzer reported, in MB.
+	//
+	// PARSED SINCE THIS PACKAGE WAS WRITTEN AND CONSUMED BY NOTHING. It is
+	// the only memory signal a slice produces, and the one that distinguishes
+	// a target growing toward an OOM kill from one that is merely slow -- a
+	// distinction that otherwise arrives as a dead container with no
+	// explanation. Recorded so the trend is visible across slices rather than
+	// only in the log of the slice that died.
+	PeakRSS int `json:"peak_rss_mb,omitempty"`
 	// Artifacts is what THIS slice produced. The before/after pair is kept
 	// beside it so the total is still recoverable and the delta is never
 	// re-derived by subtracting two numbers a reader had to find.

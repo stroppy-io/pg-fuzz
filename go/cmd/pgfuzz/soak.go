@@ -135,6 +135,7 @@ func cmdSoak(argv []string) int {
 				Cov: st.Cov, Ft: st.Ft,
 				Alive:    st.Startup() == logs.Fuzzed,
 				DiskStop: r.DiskStop, Hung: r.Hung,
+				PeakRSS: st.PeakRSS,
 			})
 		},
 	})

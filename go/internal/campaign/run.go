@@ -282,6 +282,7 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			// NON-nil pointer and defeats that guard exactly.
 			CorpusBefore: r.CorpusFrom,
 			DiskStop:     r.DiskStop,
+			PeakRSS:      st.PeakRSS,
 			Hung:         r.Hung,
 			// The slice's OWN artifacts, not the directory's total. The
 			// total is weeks of accumulation and would read as this run's

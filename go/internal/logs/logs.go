@@ -80,10 +80,14 @@ type UBSite struct {
 }
 
 var (
-	reInited   = regexp.MustCompile(`^#(\d+)\s+INITED`)
-	reDone     = regexp.MustCompile(`^#(\d+)\s+DONE`)
-	reStat     = regexp.MustCompile(`^stat::([a-z_]+):\s*(\d+)`)
-	reCovFt    = regexp.MustCompile(`cov: (\d+) ft: (\d+)`)
+	reInited = regexp.MustCompile(`^#(\d+)\s+INITED`)
+	reDone   = regexp.MustCompile(`^#(\d+)\s+DONE`)
+	reStat   = regexp.MustCompile(`^stat::([a-z_]+):\s*(\d+)`)
+	reCovFt  = regexp.MustCompile(`cov: (\d+) ft: (\d+)`)
+	// libFuzzer's per-line resident size: "rss: 980Mb". Read as well as the
+	// final stats block, which a slice killed by the OOM killer never prints
+	// -- precisely the slice whose memory growth somebody needs to see.
+	reRSS      = regexp.MustCompile(`\brss:\s*(\d+)Mb\b`)
 	reCorp     = regexp.MustCompile(`corp: (\d+)`)
 	reTimeout  = regexp.MustCompile(`-timeout=(\d+)`)
 	reRunsLine = regexp.MustCompile(`^Done (\d+) runs in (\d+) second`)
@@ -143,6 +147,12 @@ func Parse(r io.Reader) Stats {
 				if n > s.PeakRSS {
 					s.PeakRSS = n
 				}
+			}
+		}
+		// The inline field as well as stat::peak_rss_mb; see reRSS.
+		if m := reRSS.FindStringSubmatch(line); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > s.PeakRSS {
+				s.PeakRSS = n
 			}
 		}
 		if m := reCovFt.FindStringSubmatch(line); m != nil {
