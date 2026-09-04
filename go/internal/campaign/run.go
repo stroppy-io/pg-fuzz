@@ -42,6 +42,10 @@ type Config struct {
 	// Parallel is how many workspaces sweep at once. Zero means one.
 	Parallel int
 
+	// Budgets is the tuned per-target time table, applied to every sweep as
+	// the shell did. Empty means every target gets PerTarget.
+	Budgets fuzz.Budgets
+
 	// AfterSweep runs the gates after each workspace finishes a sweep, and it
 	// is a hook rather than a call because campaign must not import ratchet.
 	//
@@ -290,6 +294,7 @@ func runOne(ctx context.Context, c Config, e Entry, round int, say func(string, 
 			StopFreeGB: fuzz.DefaultStopFreeGB,
 		},
 		Targets:  e.Targets,
+		Budgets:  c.Budgets,
 		Rotate:   round,
 		Deadline: deadline,
 		OnStart:  func(t string, i, n int) { say("  ---- %s ---- (%d/%d)", t, i, n) },

@@ -1475,6 +1475,10 @@ func cmdCampaign(argv []string) int {
 		// From the RATCHET series, which is where new_units lives. A workspace
 		// with no history contributes nothing and falls back to rotation.
 		Productivity: productivity(r, entries),
+		// THE SAME TABLE THE SOAK READS. The shell applied it in every sweep;
+		// only soak did here, so the two slow targets were fuzzed on one time
+		// basis and judged against floors earned on another.
+		Budgets: loadBudgets(r),
 		// THE GATES RUN, and they run in this order. The shell spliced
 		// `ratchet check` then `ratchet update` into every workspace-round and
 		// said why: updating first raises the floor to include the round being
@@ -5415,6 +5419,18 @@ func humanBytes(n int64) string {
 // is still judged whole, and still short enough that a previous campaign's
 // logs are not dragged into this one's verdict.
 const roundWindow = 12 * time.Hour
+
+// loadBudgets reads the tuned per-target time table, if there is one.
+//
+// Absent is fine and means every target gets the flat budget: the table is
+// produced by `corpus -autocap -tune-budget`, which not every host has run.
+func loadBudgets(r paths.Roots) fuzz.Budgets {
+	home, err := r.NeedHome()
+	if err != nil {
+		return nil
+	}
+	return fuzz.LoadBudgets(filepath.Join(home, "scripts", "target-budgets.tsv"))
+}
 
 func gateAfterSweep(r paths.Roots, e campaign.Entry, round, jobs int, notJudgeable string) {
 	if notJudgeable != "" {

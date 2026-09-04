@@ -418,9 +418,20 @@ func countArtifacts(dir string) int {
 
 // SweepRequest is one pass over every target.
 type SweepRequest struct {
-	Request  // Target is filled in per target
-	Targets  []string
-	Rotate   int // rotate the order by this much; the round number
+	Request // Target is filled in per target
+	Targets []string
+	Rotate  int // rotate the order by this much; the round number
+	// Budgets is the tuned per-target time table. Empty means every target
+	// gets Request.Seconds.
+	//
+	// THE SHELL APPLIED THIS PER TARGET IN EVERY SWEEP, not only in a soak:
+	// spi_query_fuzzer and simple_query_fuzzer need 150s and 200s before they
+	// are past corpus replay. The port consumed the table in soak alone, so
+	// every campaign round gave those two the flat -time and produced their
+	// exec counts on a different time basis than the floors they are judged
+	// against -- and `corpus -autocap -tune-budget` kept writing a table
+	// nothing read.
+	Budgets  Budgets
 	Deadline time.Time
 	OnStart  func(target string, i, n int)
 	OnDone   func(target string, r Result)
@@ -454,6 +465,7 @@ func Sweep(ctx context.Context, sr SweepRequest) ([]Result, error) {
 		}
 		req := sr.Request
 		req.Target = t
+		req.Seconds = sr.Budgets.For(sr.Name, t, sr.Request.Seconds)
 		if sr.OnStart != nil {
 			sr.OnStart(t, i+1, len(targets))
 		}
