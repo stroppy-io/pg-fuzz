@@ -17,6 +17,7 @@ package build
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,23 @@ type Request struct {
 	Plugins   string            // path to plugins.tsv, or "" for none
 	Stream    io.Writer
 	Timeout   time.Duration
+
+	// LogDir is where the build log and its timing are written.
+	//
+	// The shell kept <ws>/builds/<key>.log -- the whole helper.py output --
+	// and <ws>/builds/<key>.buildtime.json, which it read back to estimate the
+	// next build. The port buffers the output in memory, re-prints only the
+	// lines matching error:|undefined reference|FAILED on failure, and lets
+	// the rest die with the process. So "why did this build fail" is
+	// answerable only if somebody was watching, and "how long does a cold
+	// build take here" -- the question the JSON was added for -- became
+	// unanswerable again.
+	//
+	// Empty means do not write one, which keeps the library usable from a
+	// test.
+	LogDir string
+	// LogKey names the log, normally the workspace's build key.
+	LogKey string
 }
 
 // Result is what the build produced.
@@ -48,6 +66,9 @@ type Result struct {
 	Elapsed time.Duration
 	Targets []string
 	Log     string
+	// LogPath is where the log was kept, or "". Named on failure so the
+	// reader is sent somewhere rather than told to have been watching.
+	LogPath string
 }
 
 // Prepare materialises the embedded project into the oss-fuzz clone.
@@ -165,11 +186,18 @@ func Fuzzers(ctx context.Context, r Request) (Result, error) {
 	start := time.Now()
 	err := cmd.Run()
 	res := Result{Elapsed: time.Since(start), Log: buf.String()}
+	// WRITTEN WHETHER IT WORKED OR NOT. A failed build is the one whose log
+	// somebody actually needs.
+	res.LogPath = writeBuildLog(r, buf.Bytes(), res.Elapsed, err == nil)
 
 	// The exit code alone is not enough: helper.py has returned 0 with no
 	// output directory. What the next stage receives is the thing to check.
 	if _, statErr := os.Stat(r.OutDir); err != nil || statErr != nil {
-		return res, fmt.Errorf("build failed: %v\n%s", err, interesting(buf.String()))
+		where := ""
+		if res.LogPath != "" {
+			where = "\nfull log: " + res.LogPath
+		}
+		return res, fmt.Errorf("build failed: %v\n%s%s", err, interesting(buf.String()), where)
 	}
 	// Before listing the targets, not after: Targets looks for executable
 	// files, so it doubles as the check that handing the tree back did not
@@ -249,6 +277,38 @@ func tail(s string, n int) string {
 		l = l[len(l)-n:]
 	}
 	return strings.Join(l, "\n")
+}
+
+// writeBuildLog keeps the output and the timing beside the workspace.
+//
+// Errors are deliberately swallowed: a build that succeeded must not be
+// reported as failed because its log could not be written, and the path it
+// returns is empty when nothing was kept.
+func writeBuildLog(r Request, out []byte, took time.Duration, ok bool) string {
+	if r.LogDir == "" || r.LogKey == "" {
+		return ""
+	}
+	if err := os.MkdirAll(r.LogDir, 0o755); err != nil {
+		return ""
+	}
+	p := filepath.Join(r.LogDir, r.LogKey+".log")
+	if err := os.WriteFile(p, out, 0o644); err != nil {
+		return ""
+	}
+	// The timing, in a form something can read back. "How long does a cold
+	// build take here" is the question this answers, and prose in a worklog
+	// does not answer it.
+	b, err := json.Marshal(struct {
+		Key     string  `json:"key"`
+		Seconds float64 `json:"seconds"`
+		OK      bool    `json:"ok"`
+		At      string  `json:"at"`
+	}{r.LogKey, took.Seconds(), ok, time.Now().UTC().Format(time.RFC3339)})
+	if err == nil {
+		_ = os.WriteFile(filepath.Join(r.LogDir, r.LogKey+".buildtime.json"),
+			append(b, '\n'), 0o644)
+	}
+	return p
 }
 
 // interesting pulls the lines a failed build is actually about.

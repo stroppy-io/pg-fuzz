@@ -763,6 +763,11 @@ func cmdBuild(argv []string) int {
 		Env:       build.EnvFor(conf),
 		Stream:    os.Stderr,
 		Timeout:   *timeout,
+		// The log and its timing, kept beside the workspace as the shell did.
+		// A failed build is the one whose log somebody needs, and it was
+		// dying with the process.
+		LogDir: filepath.Join(dir, "builds"),
+		LogKey: workspace.Key(useRef, useSan, useEng),
 	}
 	fmt.Fprintf(os.Stderr, "==> building builder image (%s)\n", conf.Project)
 	if err := build.Image(ctx, req); err != nil {
