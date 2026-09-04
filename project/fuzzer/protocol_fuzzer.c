@@ -129,8 +129,34 @@ int LLVMFuzzerInitialize(int *argc, char ***argv) {
 	 * already there. It is a whole PostgreSQL install tree -- copying it per
 	 * process put several GB into the container's writable layer for every
 	 * worker, which is host disk, and this target runs with 8 of them.
+	 *
+	 * COPY TO A PRIVATE PATH AND RENAME, because the obvious form races:
+	 *
+	 *     test -d /tmp/tmp_install || cp -r tmp_install /tmp/
+	 *
+	 * Every worker starts at the same moment into a container whose /tmp is
+	 * empty -- the container is fresh for each slice -- so all of them see the
+	 * directory missing and all of them start copying a multi-gigabyte tree
+	 * onto the same path. Whoever runs `postgres --single` while another
+	 * worker is still writing gets a half-copied install and exits 1, with the
+	 * cause discarded: libFuzzer removes the worker log without printing it,
+	 * so the slice's whole record is "Job 0 exited with exit code 1".
+	 *
+	 * That is where an intermittently red sweep item came from -- REL_19 in
+	 * run 33919705797, after two runs where the same target managed 611,969
+	 * and 763,192 executions. The race is won almost every time, which is what
+	 * made it look like infrastructure noise.
+	 *
+	 * rename(2) is atomic, so exactly one worker publishes the tree and the
+	 * losers delete their copy and use the winner's. mv -T refuses to descend
+	 * into an existing directory, which is what makes "somebody beat me" a
+	 * clean failure rather than a merge.
 	 */
-	system("test -d /tmp/tmp_install || cp -r tmp_install /tmp/");
+	system("test -d /tmp/tmp_install || { "
+		   "rm -rf /tmp/tmp_install.$$ && "
+		   "cp -r tmp_install /tmp/tmp_install.$$ && "
+		   "mv -T /tmp/tmp_install.$$ /tmp/tmp_install 2>/dev/null || "
+		   "rm -rf /tmp/tmp_install.$$; }");
 
 	/*
 	 * main() is the only place that sets MyProcPid, and main.diff removes it --
