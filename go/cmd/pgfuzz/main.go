@@ -1856,7 +1856,19 @@ func cmdCoverage(argv []string) int {
 		fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
 		return 1
 	}
-	fmt.Printf("\nALL %d TARGETS COMBINED, lines counted once\n\n", sum.Targets)
+	fmt.Printf("\nALL %d TARGETS COMBINED, lines counted once\n", sum.Targets)
+	// WHAT THE DENOMINATOR COVERS, said where the percentages are read.
+	//
+	// One anchor binary supplies the objects, so a function linked only into
+	// another target contributes profile counters but no object and leaves the
+	// numerator and the denominator together. The share is honest for what it
+	// covers; without this line a reader cannot tell what that is. The summary
+	// has recorded it and the HTML report has printed it since the audit --
+	// the command itself did not, which is where most people read this number.
+	if sum.Anchor != "" {
+		fmt.Printf("measured against %s and the libraries it links\n", sum.Anchor)
+	}
+	fmt.Println()
 	for _, row := range []struct {
 		name string
 		c    coverage.Counted

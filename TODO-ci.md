@@ -76,8 +76,13 @@ never been run is itself an unproven script.
 ## Left to build
 
 - [x] **`sweep.yml` calls `scripts/smoke.sh`**, as `ci.yml` calls `ci.sh`.
-- [x] **A coverage SHAPE check** — `scripts/smoke-coverage.sh`. Written, not
-      yet run. It asserts that a measurement produces all four counters with
+- [x] **A coverage SHAPE check** — `scripts/smoke-coverage.sh`, GREEN, and it
+      found something on its first run: the union printed its percentages and
+      never named the anchor. The summary had recorded it and the HTML report
+      had printed it since the audit; the command itself did not, which is
+      where most people read that number. Fixed.
+
+      It It asserts that a measurement produces all four counters with
       non-zero denominators, that the union can see the profiles the
       measurement just wrote, and that it names the anchor its percentages are
       against. All three defects it checks for were live this week and all
