@@ -3001,6 +3001,18 @@ func cmdBootstrap(argv []string) int {
 			if archive.Commit(oss, false) != pin.Commit {
 				fmt.Printf("  checking oss-fuzz out at the pinned %s\n", pin.Commit[:12])
 				exec.CommandContext(ctx, "git", "-C", oss, "fetch", "--quiet", "origin").Run()
+				// A SHALLOW CLONE DOES NOT CONTAIN THE PIN.
+				//
+				// -shallow clones at --depth 1, and the pinned commit is
+				// almost never the tip -- so the checkout failed with "unable
+				// to read tree" and every item of the first real sweep died
+				// here. The flag I added to save 1 GB broke the pin it was
+				// cloning for.
+				//
+				// Asking for the one commit by sha costs nothing and works on
+				// a full clone too, where it is a no-op.
+				exec.CommandContext(ctx, "git", "-C", oss,
+					"fetch", "--quiet", "--depth", "1", "origin", pin.Commit).Run()
 				co := exec.CommandContext(ctx, "git", "-C", oss, "checkout", "--quiet", pin.Commit)
 				co.Stderr = os.Stderr
 				if err := co.Run(); err != nil {
