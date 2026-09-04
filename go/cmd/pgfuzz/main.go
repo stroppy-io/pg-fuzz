@@ -63,7 +63,7 @@ import (
 const usage = `pgfuzz -- reproduce a recorded finding
 
   pgfuzz build -w <workspace> [-ref R] [-sanitizer S] [-engine E]
-                [-no-disk-check] [-no-stack-check] [-into DIR]
+                [-no-disk-check] [-no-stack-check] [-no-head-check] [-into DIR]
   pgfuzz targets -w <workspace>
   pgfuzz run   -w <workspace> -t <target> [-time S] [-jobs N]
   pgfuzz sweep -w <workspace> [-time S] [-jobs N] [-round N]
@@ -508,6 +508,7 @@ func cmdBuild(argv []string) int {
 	keepSrc := fs.Bool("keep-src", false, "keep the exported source tree")
 	noDisk := fs.Bool("no-disk-check", false, "build even with little free space")
 	noStackCheck := fs.Bool("no-stack-check", false, "build even without the ASan stack-depth fix")
+	noHeadCheck := fs.Bool("no-head-check", false, "build a local branch that is behind its remote")
 	noPin := fs.Bool("no-pin", false, "build against whatever substrate is present, ignoring the pin")
 	timeout := fs.Duration("timeout", 90*time.Minute, "give up after this long")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
@@ -637,6 +638,19 @@ func cmdBuild(argv []string) int {
 	if !*noStackCheck {
 		if err := build.CheckStackFix(repo.Dir, full, useSan, conf.Get("patch")); err != nil {
 			fmt.Fprintf(os.Stderr, "pgfuzz: %v\n", err)
+			return 2
+		}
+	}
+	// REFUSE A TREE THAT IS BEHIND ITS OWN REMOTE.
+	//
+	// A bare branch name resolves to the LOCAL branch, and a fetch advances
+	// only remote-tracking refs -- so a stale local master builds week-old
+	// code while the line below calls it a moving branch, as though it were
+	// HEAD. The shell died here; this does too, with -no-head-check to
+	// override deliberately.
+	if !*noHeadCheck {
+		if why := repo.BehindRemote(ctx, useRef); why != "" {
+			fmt.Fprintf(os.Stderr, "pgfuzz: %s\n  or pass -no-head-check\n", why)
 			return 2
 		}
 	}
