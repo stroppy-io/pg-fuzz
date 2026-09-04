@@ -97,6 +97,8 @@ const usage = `pgfuzz -- reproduce a recorded finding
   pgfuzz watchdog [-grace S] [-interval S] [-n]
   pgfuzz plateau -w <ws> [-w <ws>...] [-window M] [-once]
   pgfuzz tidy   [-apply] [-min-mb N] [-docker]
+  pgfuzz regress -w <ws> [-work DIR] [-image IMG]
+                 PostgreSQL's own suite against this workspace's patched tree
   pgfuzz plugins -f plugins.tsv [name...]
   pgfuzz inventory [-w <ws>...] [-json] [-drift]
   pgfuzz triage-report [-o FILE] [-check] [-family F] [-note TEXT]
@@ -260,6 +262,8 @@ func main() {
 		os.Exit(cmdBreakdown(os.Args[2:]))
 	case "clone":
 		os.Exit(cmdClone(os.Args[2:]))
+	case "regress":
+		os.Exit(cmdRegress(os.Args[2:]))
 	case "reown":
 		os.Exit(cmdReown(os.Args[2:]))
 	case "repro":
