@@ -139,17 +139,13 @@ jobs:
           echo "plugins=pgaudit pg_background pgsql-http" >> "$conf"
           cat "$conf"
 
-      - name: build
-        run: pgfuzz build -w "$WS" -no-disk-check
-
-      # THE PATCH REACHED THE TREE, asserted rather than assumed: this is the
-      # pipeline that was silently dead once already.
-      - name: the patch applied
-        run: |
-          grep -q '^patch_applied=' "$PGFUZZ_WS/$WS/workspace.conf" \
-            || { echo "the build recorded no applied patch"; exit 1; }
-          pgfuzz inventory -w "$WS" | grep -i 'ci-marker' \
-            || { echo "the inventory cannot name the patch"; exit 1; }
+      # NO SEPARATE BUILD STEP.
+      #
+      # The campaign inside smoke.sh builds into the slug, so a `pgfuzz build`
+      # here compiled PostgreSQL a SECOND time -- about twenty wasted minutes
+      # an item -- and did it without -no-pin, so every item died on a moving
+      # branch that had moved. The campaign owns the build; a build failure
+      # surfaces as smoke.sh's campaign step, which names it.
 
       # THE WHOLE PIPELINE, through the same script that runs on a laptop.
       #
@@ -164,6 +160,17 @@ jobs:
         run: |
           secs='${{ github.event.inputs.seconds }}'
           scripts/smoke.sh "$WS" "${secs:-8}"
+
+      # THE PATCH REACHED THE TREE, asserted rather than assumed: this is the
+      # pipeline that was silently dead once already. After the build, because
+      # the build is what records it.
+      - name: the patch applied
+        if: always()
+        run: |
+          grep -q '^patch_applied=' "$PGFUZZ_WS/$WS/workspace.conf" \
+            || { echo "the build recorded no applied patch"; exit 1; }
+          pgfuzz inventory -w "$WS" | grep -i 'ci-marker' \
+            || { echo "the inventory cannot name the patch"; exit 1; }
 
       - name: what it produced
         if: always()
