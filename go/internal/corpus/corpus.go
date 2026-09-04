@@ -108,6 +108,58 @@ func Repair(dir string) (fixed int, err error) {
 // Copies, never moves or links: the source campaign keeps running, and a
 // hard link means a later minimisation in one workspace silently changes the
 // other's corpus.
+// seedDir copies one target's inputs, recursing.
+//
+// SUBDIRECTORIES ARE STILL INPUTS. The shell copied with `cp -rn`, which
+// recurses; this skipped any directory inside a target directory. Nothing
+// writes nested corpus entries today, so it was latent -- but a seed that
+// silently drops part of a corpus is the failure this file is about, and depth
+// is not a reason to skip.
+func seedDir(src, dst string) (SeedResult, error) {
+	var res SeedResult
+	ents, err := os.ReadDir(src)
+	if err != nil {
+		return res, err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return res, err
+	}
+	for _, e := range ents {
+		s, d := filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			sub, err := seedDir(s, d)
+			res.Copied += sub.Copied
+			res.Present += sub.Present
+			res.Failed += sub.Failed
+			if res.FirstErr == nil {
+				res.FirstErr = sub.FirstErr
+			}
+			if err != nil && res.FirstErr == nil {
+				res.FirstErr = err
+			}
+			continue
+		}
+		// libFuzzer names corpus files after the SHA-1 of their content, so a
+		// name that already exists is the same input -- skipping is correct
+		// and cheap, and re-copying would only rewrite it.
+		if _, err := os.Stat(d); err == nil {
+			res.Present++
+			continue
+		}
+		if err := copyFile(s, d); err != nil {
+			// A FAULT, not a duplicate. Counting it as skipped and printing
+			// "already present" is how an unreadable source reported success.
+			res.Failed++
+			if res.FirstErr == nil {
+				res.FirstErr = err
+			}
+			continue
+		}
+		res.Copied++
+	}
+	return res, nil
+}
+
 // SeedResult separates what happened, because one counter could not.
 //
 // "already present" and "could not be copied" were both counted as skipped and
@@ -148,50 +200,15 @@ func SeedInto(srcRoot, dstRoot string) (SeedResult, error) {
 		if err := os.MkdirAll(dst, 0o755); err != nil {
 			return res, err
 		}
-		ents, err := os.ReadDir(src)
-		if err != nil {
-			continue
+		sub, err := seedDir(src, dst)
+		res.Copied += sub.Copied
+		res.Present += sub.Present
+		res.Failed += sub.Failed
+		if res.FirstErr == nil {
+			res.FirstErr = sub.FirstErr
 		}
-		for _, e := range ents {
-			if e.IsDir() {
-				// SUBDIRECTORIES ARE STILL INPUTS. The shell copied with
-				// `cp -rn "$src/corpus/."`, which recurses. Nothing writes
-				// nested corpus entries today, so this is latent rather than
-				// live -- but a seed that silently drops part of a corpus is
-				// the failure this whole file is about, and the depth of a
-				// directory is not a reason to skip it.
-				sub, subErr := SeedInto(filepath.Join(src, e.Name()),
-					filepath.Join(dst, e.Name()))
-				res.Copied += sub.Copied
-				res.Present += sub.Present
-				res.Failed += sub.Failed
-				if res.FirstErr == nil {
-					res.FirstErr = sub.FirstErr
-				}
-				if subErr != nil && res.FirstErr == nil {
-					res.FirstErr = subErr
-				}
-				continue
-			}
-			// libFuzzer names corpus files after the SHA-1 of their content,
-			// so a name that already exists is the same input -- skipping is
-			// correct and cheap, and re-copying would only rewrite it.
-			out := filepath.Join(dst, e.Name())
-			if _, err := os.Stat(out); err == nil {
-				res.Present++
-				continue
-			}
-			if err := copyFile(filepath.Join(src, e.Name()), out); err != nil {
-				// A FAULT, not a duplicate. Counting it as skipped and
-				// printing "already present" is how an unreadable source
-				// reported success.
-				res.Failed++
-				if res.FirstErr == nil {
-					res.FirstErr = err
-				}
-				continue
-			}
-			res.Copied++
+		if err != nil && res.FirstErr == nil {
+			res.FirstErr = err
 		}
 	}
 	return res, nil
